@@ -132,37 +132,95 @@ function stripBackticks(cell) {
   return cell.replace(/^`+/, '').replace(/`+$/, '');
 }
 
-/** True for the `| --- | --- |` separator row. */
+/** Columns the table must carry, whatever order they appear in. */
+const REQUIRED_COLUMNS = ['#', 'updated', 'msgs', 'agent', 'directory', 'title', 'session id'];
+
+/**
+ * True for the `| --- | --- |` separator row.
+ */
 function isSeparator(cells) {
   return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c));
 }
 
-/** True for the `| # | updated | ... | session id |` header row. */
-function isHeader(cells) {
-  return cells.length >= 7 && cells[0] === '#' && cells[6].toLowerCase() === 'session id';
+/**
+ * Map a header row's column names to their indexes, or null when it is not a
+ * header this parser understands.
+ *
+ * Columns are matched by NAME, never by position. The catalog gained a `created`
+ * column, and both readers of this shared file — this one and the WPF app's —
+ * had the original seven fields hardcoded to indexes. A positional reader of a
+ * file it did not write is a reader that breaks the moment the file is
+ * regenerated, and it breaks the other reader too, because they share one
+ * artifact.
+ *
+ * `created` is deliberately NOT required: a catalog written before it existed
+ * must keep parsing, reporting no creation time rather than nothing at all.
+ *
+ * @param {string[]} cells
+ * @returns {Record<string, number>|null}
+ */
+export function columnMap(cells) {
+  if (!Array.isArray(cells) || cells.length === 0) return null;
+
+  const map = Object.create(null);
+  for (let i = 0; i < cells.length; i++) {
+    const name = String(cells[i]).toLowerCase();
+    // First writer wins, so a duplicated name cannot shadow the real column.
+    if (name && !(name in map)) map[name] = i;
+  }
+
+  for (const required of REQUIRED_COLUMNS) {
+    if (!(required in map)) return null;
+  }
+  return map;
 }
 
 /**
  * Parse the markdown catalog into session records.
+ *
+ * `created` and `updated` are the RAW trimmed cell text, not dates. This parser
+ * has always passed `updated` through as a string, and giving one timestamp a
+ * parsed type while leaving the other as text would change the contract for
+ * every caller for no reason.
+ *
  * @param {string} markdown
- * @returns {{id:string,title:string,directory:string,agent:string,updated:string,msgs:number}[]}
+ * @returns {{id:string,title:string,directory:string,agent:string,created:string,updated:string,msgs:number}[]}
  */
 export function parseCatalog(markdown) {
   const sessions = [];
+  let map = null;
+
   for (const rawLine of markdown.split(/\r?\n/)) {
     const line = rawLine.trimEnd();
     if (!line.startsWith('|')) continue;
-    const cells = splitRow(line);
-    if (cells.length < 7) continue;
-    if (isHeader(cells) || isSeparator(cells)) continue;
 
-    const msgs = Number.parseInt(cells[2], 10);
+    const cells = splitRow(line);
+    if (isSeparator(cells)) continue;
+
+    const candidate = columnMap(cells);
+    if (candidate) {
+      map = candidate;
+      continue;
+    }
+
+    // Rows before any recognisable header cannot be read at all.
+    if (!map) continue;
+
+    // A row that cannot carry an id is unusable; a row that merely lost a later
+    // column still yields everything it kept.
+    if (map['session id'] >= cells.length) continue;
+
+    const cell = (name) => (map[name] < cells.length ? cells[map[name]] : '');
+    const msgs = Number.parseInt(cell('msgs'), 10);
+
     sessions.push({
-      id: stripBackticks(cells[6]),
-      title: cells[5],
-      directory: stripBackticks(cells[4]),
-      agent: cells[3],
-      updated: cells[1],
+      id: stripBackticks(cell('session id')),
+      title: cell('title'),
+      directory: stripBackticks(cell('directory')),
+      agent: cell('agent'),
+      // '' when the column is absent, which is what the 7-column layout gives.
+      created: cell('created'),
+      updated: cell('updated'),
       msgs: Number.isNaN(msgs) ? 0 : msgs,
     });
   }
@@ -171,7 +229,7 @@ export function parseCatalog(markdown) {
 
 /**
  * Resolve, read and parse the catalog in one step.
- * @returns {{id:string,title:string,directory:string,agent:string,updated:string,msgs:number}[]}
+ * @returns {{id:string,title:string,directory:string,agent:string,created:string,updated:string,msgs:number}[]}
  */
 export function loadCatalog() {
   const path = resolveCatalogPath();

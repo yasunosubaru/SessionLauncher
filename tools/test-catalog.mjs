@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-import { resolveCatalogWritePath } from '../src/SessionLauncher.Mcp/lib/catalog.mjs';
+import { resolveCatalogWritePath, parseCatalog } from '../src/SessionLauncher.Mcp/lib/catalog.mjs';
 import { generate } from '../src/SessionLauncher.Mcp/refresh_catalog.mjs';
 
 let checks = 0;
@@ -180,4 +180,81 @@ function buildDb(parentDir) {
 }
 
 // ---- 3. the MCP parser, on inline markdown ----
-// (Added by a later task, which is also when parseCatalog gets imported.)
+//
+// The MCP server and the WPF app read the SAME file. A parser that only
+// understands one layout is not a local bug: whichever reader is stricter
+// decides what the other one sees.
+
+const MD_SEVEN = [
+  '| # | updated | msgs | agent | directory | title | session id |',
+  '| --- | --- | --- | --- | --- | --- | --- |',
+  '| 1 | 2026-10-01 17:39 | 1031 | build | `F:/a/b` | title one \\| with pipe | `ses_one` |',
+  '| 2 | 2026-01-01 09:00 | 7 | plan | `C:/x` |  | `ses_two` |',
+].join('\n');
+
+const MD_EIGHT = [
+  '| # | created | updated | msgs | agent | directory | title | session id |',
+  '| --- | --- | --- | --- | --- | --- | --- | --- |',
+  '| 1 | 2026-08-19 11:03 | 2026-10-01 17:39 | 1031 | build | `F:/a/b` | title one \\| with pipe | `ses_one` |',
+  '| 2 | 2026-07-02 08:00 | 2026-01-01 09:00 | 7 | plan | `C:/x` |  | `ses_two` |',
+].join('\n');
+
+{
+  // The old layout: still parses, and created is empty rather than absent.
+  const s7 = parseCatalog(MD_SEVEN);
+  checkEqual(2, s7.length, 'the parser reads the 7-column layout');
+  checkEqual('ses_one', s7[0].id, 'the id is read from the 7-column layout');
+  checkEqual('title one | with pipe', s7[0].title, 'an escaped pipe resolves in the parser too');
+  checkEqual(1031, s7[0].msgs, 'the message count is read');
+  checkEqual('F:/a/b', s7[0].directory, 'backticks are stripped from the directory');
+  checkEqual('2026-10-01 17:39', s7[0].updated, 'updated stays raw text, as it always was');
+  checkEqual('', s7[0].created, 'a layout with no created column yields an empty string');
+
+  // The new layout.
+  const s8 = parseCatalog(MD_EIGHT);
+  checkEqual(2, s8.length, 'the parser reads the 8-column layout');
+  checkEqual('2026-08-19 11:03', s8[0].created, 'the created cell is read');
+  checkEqual('2026-07-02 08:00', s8[1].created, 'each row gets its own created value');
+  checkEqual('2026-10-01 17:39', s8[0].updated, 'created did not displace updated');
+  checkEqual('ses_one', s8[0].id, 'the id did not shift with the new column');
+  checkEqual(1031, s8[0].msgs, 'the message count did not shift either');
+  checkEqual('build', s8[0].agent, 'nor did the agent');
+
+  // Order-independence, which is the whole reason for name mapping.
+  const reversed = [
+    '| # | updated | msgs | agent | title | directory | session id |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| 1 | 2026-10-01 17:39 | 5 | build | the title | `F:/a/b` | `ses_rev` |',
+  ].join('\n');
+  const rev = parseCatalog(reversed);
+  checkEqual(1, rev.length, 'a reordered header parses');
+  checkEqual('the title', rev[0].title, 'a reordered header does not swap title for directory');
+  checkEqual('F:/a/b', rev[0].directory, 'a reordered header does not swap directory for title');
+
+  // Rejections, and the values that must survive them.
+  checkEqual(0, parseCatalog('| # | updated | msgs | agent | directory | session id |').length,
+    'a header missing the title column yields nothing');
+  checkEqual(0, parseCatalog('not a table at all').length,
+    'a document with no table yields nothing');
+
+  const blank = [
+    '| # | created | updated | msgs | agent | directory | title | session id |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| 1 |  | 2026-10-01 17:39 | 1 | build | `F:/a` | t | `ses_blank` |',
+  ].join('\n');
+  const b = parseCatalog(blank);
+  checkEqual(1, b.length, 'an empty created cell does not drop the row');
+  checkEqual('', b[0].created, 'an empty created cell reads as an empty string');
+
+  const shortRow = [
+    '| # | created | updated | msgs | agent | directory | title | session id |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| 1 | 2026-08-19 11:03 |',
+    '| 2 | 2026-07-02 08:00 | 2026-01-01 09:00 | 7 | plan | `C:/x` | t | `ses_two` |',
+  ].join('\n');
+  const sr = parseCatalog(shortRow);
+  checkEqual(1, sr.length, 'a row that lost its cells is skipped, and the rest still parse');
+  checkEqual('ses_two', sr[0].id, 'the intact row is the one that survives');
+}
+
+console.log(`test-catalog OK  assertions=${checks}`);
