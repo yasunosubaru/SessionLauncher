@@ -124,6 +124,16 @@ public sealed class LauncherService
     }
 
     /// <summary>
+    /// True when OpenChamber is running, in any of its processes.
+    /// </summary>
+    /// <remarks>
+    /// The count itself lives on <see cref="ProjectRegistrationWait"/> because the
+    /// self-test harness stages that file and not this one; see the note there for
+    /// why a window-based check would be wrong.
+    /// </remarks>
+    public static bool IsOpenChamberRunning() => ProjectRegistrationWait.OpenChamberProcessCount() > 0;
+
+    /// <summary>
     /// Bring OpenChamber to the front, starting it if needed.
     /// </summary>
     /// <returns>True when it was already running, false when it had to be started.</returns>
@@ -138,7 +148,7 @@ public sealed class LauncherService
             ?? throw new FileNotFoundException(
                 "OpenChamber.exe not found. Set SESSIONLAUNCHER_OPENCHAMBER_EXE to override.");
 
-        var wasRunning = Process.GetProcessesByName("OpenChamber").Length > 0;
+        var wasRunning = IsOpenChamberRunning();
 
         // Shell-execute so the Squirrel shim resolves rather than being treated as a
         // raw executable with no runtime attached.

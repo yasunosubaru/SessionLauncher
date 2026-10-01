@@ -34,6 +34,7 @@ namespace SessionLauncher.App.Services
             _checks += ProjectCatalog.RunSelfTest();
             _checks += ProjectSort.RunSelfTest();
             _checks += SessionCatalog.RunSelfTest();
+            _checks += ProjectRegistrationWait.RunSelfTest();
             _checks += WorkspaceService.RunSelfTest();
             _checks += OpenChamberBridge.RunSelfTest();
 

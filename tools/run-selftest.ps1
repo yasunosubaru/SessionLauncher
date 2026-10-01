@@ -35,6 +35,7 @@ $sources = @(
     'Services\ProjectSort.cs'
     'Services\WorkspaceService.cs'
     'Services\OpenChamberBridge.cs'
+    'Services\ProjectRegistrationWait.cs'
     'Services\SelfTest.cs'
 )
 
