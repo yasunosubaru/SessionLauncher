@@ -1,0 +1,779 @@
+<Window x:Class="SessionLauncher.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:markup="clr-namespace:SessionLauncher.App.Markup"
+        Title="Session Launcher" Height="800" Width="1240"
+        MinHeight="560" MinWidth="980"
+        Background="#101319" Foreground="#E2E6EE"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
+        Loaded="OnWindowLoaded">
+
+    <Window.Resources>
+
+        <!-- ============ palette ============ -->
+        <!-- Glass palette.
+             Every surface carries an alpha channel so the DWM acrylic backdrop shows
+             through (see ApplyGlassBackdrop). The alphas are deliberately NOT uniform:
+             the window base is the most opaque so long paths stay readable, list rows
+             are nearly solid for text contrast, and the chrome in between is the most
+             transparent, which is what actually reads as "glass".
+
+             Going fully opaque here is what killed the glass feel. Text contrast is
+             protected by the row fills staying opaque, not by the panels behind them. -->
+        <SolidColorBrush x:Key="Bg"        Color="#B3101319" />
+        <SolidColorBrush x:Key="Surface"   Color="#99171C25" />
+        <SolidColorBrush x:Key="SurfaceAlt" Color="#901B212C" />
+        <SolidColorBrush x:Key="Border"    Color="#5928303E" />
+        <SolidColorBrush x:Key="Subtle"    Color="#8A93A4" />
+        <SolidColorBrush x:Key="Accent"    Color="#5C86FF" />
+
+        <!-- The root is a gradient, not a flat fill. A pane of glass lit from above
+             is never one colour, and this top-lit falloff is most of what reads as
+             "glass" once the acrylic tint is in place. -->
+        <LinearGradientBrush x:Key="BgGradient" StartPoint="0,0" EndPoint="0.35,1">
+            <GradientStop Offset="0" Color="#B31A1F2B" />
+            <GradientStop Offset="0.45" Color="#AF12161F" />
+            <GradientStop Offset="1" Color="#B00D1016" />
+        </LinearGradientBrush>
+
+        <!-- A 1px light line along the top edge of each panel. This is the detail that
+             actually sells the glass: it reads as a specular highlight from above. -->
+        <LinearGradientBrush x:Key="GlassEdge" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Offset="0" Color="#40FFFFFF" />
+            <GradientStop Offset="1" Color="#00FFFFFF" />
+        </LinearGradientBrush>
+
+        <!-- ============ buttons ============ -->
+        <Style x:Key="GhostButton" TargetType="Button">
+            <Setter Property="Padding" Value="13,7" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Background" Value="#202632" />
+            <Setter Property="Foreground" Value="#E2E6EE" />
+            <Setter Property="BorderBrush" Value="#2E3746" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#2A3240" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#161C26" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+            <Setter Property="Background" Value="#3C63D8" />
+            <Setter Property="BorderBrush" Value="#4C74E8" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#4A72E8" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Compact square button, used for the font and language toggles. -->
+        <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="Margin" Value="6,0,0,0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <!-- ============ list rows ============
+             This style carries its own ControlTemplate, and that is load-bearing.
+
+             Why: the stock ListViewItem template paints its own hover state. Dumping
+             the live theme template with XamlWriter shows a MultiTrigger on
+             IsMouseOver whose setters target the named Border directly:
+
+                 <Setter Property="Panel.Background" TargetName="Bd">#1F26A0DA</Setter>
+                 <Setter Property="Border.BorderBrush" TargetName="Bd">#A826A0DA</Setter>
+
+             A ControlTemplate trigger beats a TemplateBinding, so setting Background
+             on the ListViewItem in Style.Triggers cannot change what hover looks like:
+             the template wins, blends a light tint over the row, and the near-white
+             Foreground the rows inherit from the window washes out. Hence the reported
+             "hover makes the whole row unreadable". Styling the item's Background is
+             not a fix; the template has to be replaced.
+
+             Below, the template triggers set LITERAL colours on the inner border, so
+             nothing upstream can override them. GridViewRowPresenter takes Columns off
+             the ancestor ListView (it has no Columns property of its own to bind to),
+             and it has no ContentTemplate/ContentTemplateSelector, which is why those
+             are absent here.
+        -->
+        <Style x:Key="RowStyle" TargetType="ListViewItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="#E2E6EE" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListViewItem">
+                        <!-- The Border must fill the row: GridViewRowPresenter lays out only
+                             the cells the GridView declares, so anything wider than the
+                             columns would otherwise show the list background through the
+                             gap. Verified with VisualTreeHelper.HitTest in a standalone
+                             harness that lifted this style verbatim - a click inside a
+                             cell, between cells, and past the last column all resolve
+                             here, so the row is a correct hit target as written. -->
+                        <Border x:Name="rowBd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <GridViewRowPresenter
+                                Columns="{Binding Path=View.Columns,
+                                            RelativeSource={RelativeSource AncestorType=ListView}}"
+                                Content="{TemplateBinding Content}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="rowBd" Property="Background" Value="#F025334F" />
+                            </Trigger>
+                            <!-- Last in the collection, so the hover tint stays visible
+                                 over the banding and over the ticked fill. A white
+                                 overlay at low alpha rather than a flat colour: the row
+                                 brightens the way glass does, and the backdrop still
+                                 shows through it. -->
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="rowBd" Property="Background" Value="#26FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <!-- Row fills stay fairly opaque (alpha ~E8) so text contrast survives
+                     the acrylic behind them, but not fully opaque, or the list stops
+                     looking like part of the glass at all. -->
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self},
+                                          Path=AlternationIndex}" Value="0">
+                    <Setter Property="Background" Value="#E8141922" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self},
+                                          Path=AlternationIndex}" Value="1">
+                    <Setter Property="Background" Value="#E8171D27" />
+                </DataTrigger>
+                <!-- A ListViewItem's DataContext is the row itself, so the checkbox state
+                     is readable straight from a trigger on the container style. -->
+                <DataTrigger Binding="{Binding IsChosen}" Value="True">
+                    <Setter Property="Background" Value="#F020304F" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ColumnHeader" TargetType="GridViewColumnHeader">
+            <Setter Property="Background" Value="#1A202B" />
+            <Setter Property="Foreground" Value="#7E8798" />
+            <Setter Property="Padding" Value="9,8" />
+            <Setter Property="BorderBrush" Value="#232B38" />
+            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <!-- A static-resource key is resolved in document order, so anything
+                 BasedOn'ing this has to be declared afterwards. Getting this wrong is a
+                 runtime XamlParseException, not a compile error: the resource key simply
+                 is not found while the tree is being built. -->
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GridViewColumnHeader">
+                        <Border x:Name="hd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"
+                                              ContentSource="Content" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="hd" Property="Background" Value="#232B38" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- The project list's header: the shared one reads as disabled against the
+             darker project panel. Declared after ColumnHeader for the reason above. -->
+        <Style x:Key="ProjectColumnHeader" TargetType="GridViewColumnHeader"
+               BasedOn="{StaticResource ColumnHeader}">
+            <Setter Property="Foreground" Value="#AEB6C4" />
+            <Setter Property="Background" Value="#151A23" />
+        </Style>
+
+        <Style x:Key="Muted" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Subtle}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- ============ combo box ============
+             The sort control needs its own template. Left to the stock theme it
+             renders as a white box on a dark panel, and the dropdown list is worse:
+             an unthemed ComboBoxItem ignores Foreground in its selected state, so the
+             highlighted row is white text on white.
+        -->
+        <Style x:Key="DarkComboItem" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#E2E6EE" />
+            <Setter Property="Padding" Value="9,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#25334F" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DarkCombo" TargetType="ComboBox">
+            <!-- DisplayMemberPath, not ItemTemplate: the template below binds
+                 SelectionBoxItem directly, and without a path or template the closed
+                 combo shows ToString() of the record, which is the type name. -->
+            <Setter Property="DisplayMemberPath" Value="Label" />
+            <Setter Property="Foreground" Value="#E2E6EE" />
+            <Setter Property="Background" Value="{StaticResource SurfaceAlt}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Border}" />
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboItem}" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                          RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="bd"
+                                                Background="{StaticResource SurfaceAlt}"
+                                                BorderBrush="{StaticResource Border}"
+                                                BorderThickness="1" CornerRadius="5" />
+                                        <!-- The hover and open states live HERE, not on the
+                                             ComboBox template: a TargetName can only reach
+                                             elements in its own namescope, and bd is
+                                             inside this nested template. Putting the
+                                             triggers on the outer template is MC4111. -->
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="BorderBrush"
+                                                        Value="#3A4557" />
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="bd" Property="BorderBrush"
+                                                        Value="#3C63D8" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <!-- SelectionBoxItemTemplate, not ItemTemplate: with
+                                 DisplayMemberPath set, the item template used for the
+                                 OPEN list is not the one the closed box renders, and
+                                 binding ItemTemplate here yielded an empty combo.
+                                 HorizontalAlignment is explicit because ContentPresenter
+                                 defaults to Left and then measures to zero width. -->
+                            <ContentPresenter x:Name="Site" Margin="10,0,28,0"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" />
+
+                            <Path x:Name="Arrow" HorizontalAlignment="Right" Margin="0,0,10,0"
+                                  VerticalAlignment="Center" Data="M 0 0 L 5 5 L 10 0"
+                                  Stroke="{StaticResource Subtle}" StrokeThickness="1.4" />
+
+                            <!-- PopupPrimaryAxisHeight is an attached property on Popup, and
+                                 XAML spells it as Popup.PrimaryAxisHeight on a CHILD element
+                                 or via a property element. Set on the child Border below
+                                 instead: it is simpler and avoids both spellings. -->
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True"
+                                   Placement="Bottom" PopupAnimation="Fade"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Focusable="False">
+                                <Border Background="{StaticResource Surface}"
+                                        BorderBrush="{StaticResource Border}"
+                                        BorderThickness="1" CornerRadius="6"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer Margin="4">
+                                        <ItemsPresenter />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- The checkbox in the project filter row. -->
+        <Style x:Key="DarkCheck" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#E2E6EE" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Border x:Name="box" Width="15" Height="15" CornerRadius="3"
+                                    Background="{StaticResource SurfaceAlt}"
+                                    BorderBrush="{StaticResource Border}"
+                                    BorderThickness="1" VerticalAlignment="Center">
+                                <Path x:Name="tick" Data="M 2 6 L 5 9 L 11 2" Stroke="#FFFFFF"
+                                      StrokeThickness="1.8" Visibility="Collapsed"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center"
+                                              Content="{TemplateBinding Content}" />
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="box" Property="Background" Value="#3C63D8" />
+                                <Setter TargetName="box" Property="BorderBrush" Value="#3C63D8" />
+                                <Setter TargetName="tick" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="#3A4557" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Implicit style, so a Button with no explicit Style still matches the dark theme. -->
+        <Style TargetType="Button" BasedOn="{StaticResource GhostButton}" />
+
+    </Window.Resources>
+
+    <!-- Root uses the gradient, not the flat Bg: see BgGradient. -->
+    <Border Background="{StaticResource BgGradient}">
+    <DockPanel Margin="18">
+
+        <!-- ================= header ================= -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Width="4" CornerRadius="2"
+                    Background="{StaticResource Accent}" Margin="0,2,12,2" />
+
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="{markup:Tr app.title}" FontSize="22" FontWeight="SemiBold" />
+                <TextBlock x:Name="SourceText" Style="{StaticResource Muted}" Margin="0,4,0,0"
+                           Text="Locating catalog…" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <!-- result count, font scale, language -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Background="{StaticResource SurfaceAlt}"
+                        BorderBrush="{StaticResource Border}" BorderThickness="1"
+                        CornerRadius="14" Padding="12,5" VerticalAlignment="Center">
+                    <TextBlock x:Name="TotalChip" Style="{StaticResource Muted}" Text="0" />
+                </Border>
+                <TextBlock x:Name="FontPercentLabel" Style="{StaticResource Muted}"
+                           VerticalAlignment="Center" Margin="12,0,0,0" Text="100%" />
+                <Button x:Name="FontSmaller" Style="{StaticResource IconButton}"
+                        Content="{markup:Tr act.fontSmaller}" ToolTip="{markup:Tr act.fontSmaller}"
+                        Click="OnFontSmallerClick" />
+                <Button x:Name="FontReset" Style="{StaticResource IconButton}"
+                        Content="{markup:Tr act.fontReset}" Click="OnFontResetClick"
+                        ToolTip="{markup:Tr act.fontPercent}" />
+                <Button x:Name="FontBigger" Style="{StaticResource IconButton}"
+                        Content="{markup:Tr act.fontBigger}" ToolTip="{markup:Tr act.fontBigger}"
+                        Click="OnFontBiggerClick" />
+                <Button x:Name="LanguageButton" Style="{StaticResource IconButton}"
+                        Click="OnLanguageClick" MinWidth="58"
+                        Content="{markup:Tr act.language}"
+                        ToolTip="{markup:Tr act.language}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ================= view switch: conversations / projects ==========
+             Rebuilding the window is how the language toggle works, so the selected
+             view has to survive that: it is written to AppSettings, not held as a
+             field, or switching language silently drops you back to the session list. -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button x:Name="ViewSessions" Style="{StaticResource IconButton}"
+                    Content="{markup:Tr view.sessions}" Click="OnViewSessionsClick"
+                    Margin="0" MinWidth="96" />
+            <Button x:Name="ViewProjects" Style="{StaticResource IconButton}"
+                    Content="{markup:Tr view.projects}" Click="OnViewProjectsClick"
+                    MinWidth="96" />
+        </StackPanel>
+
+        <!-- ================= toolbar =================
+             Hidden in the project view, which carries its own filter row inside the
+             panel; leaving this one up would show a search box wired to the session
+             list, which is not what is on screen. -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12" x:Name="SessionToolbar">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource Surface}"
+                    BorderBrush="{StaticResource Border}" BorderThickness="1"
+                    CornerRadius="7" Height="36">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="&#xE721;" Margin="11,0,0,0"
+                               FontFamily="Segoe MDL2 Assets" FontSize="13"
+                               Foreground="{StaticResource Subtle}" VerticalAlignment="Center" />
+                    <TextBox x:Name="SearchBox" Grid.Column="1" BorderThickness="0"
+                     Background="Transparent" Foreground="#E2E6EE"
+                     CaretBrush="#E2E6EE" Padding="8,0"
+                     VerticalContentAlignment="Center"
+                     TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown" />
+                    <TextBlock x:Name="SearchHint" Grid.Column="1" Margin="12,0,0,0"
+                               Text="{markup:Tr search.placeholder}" IsHitTestVisible="False"
+                               Foreground="{StaticResource Subtle}" VerticalAlignment="Center" />
+                    <Button x:Name="ClearSearch" Grid.Column="2" Content="&#xE711;"
+                            Style="{StaticResource IconButton}" Margin="4"
+                            Padding="7,0" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                            ToolTip="{markup:Tr search.clearTip}"
+                            Visibility="Collapsed" Click="OnClearSearchClick" />
+                </Grid>
+            </Border>
+
+            <Button Grid.Column="1" x:Name="SelectAllButton"
+                    Content="{markup:Tr btn.selectAll}" ToolTip="{markup:Tr btn.selectAll}"
+                    Click="OnSelectAllClick" Margin="10,0,0,0" VerticalAlignment="Stretch" />
+            <Button Grid.Column="2" x:Name="ClearSelectionButton"
+                    Content="{markup:Tr btn.clearSelection}"
+                    Click="OnClearSelectionClick" Margin="8,0,0,0" VerticalAlignment="Stretch" />
+            <Button Grid.Column="3" Content="{markup:Tr btn.reload}" Click="OnReloadClick"
+                    Margin="8,0,0,0" VerticalAlignment="Stretch" />
+        </Grid>
+
+        <!-- ================= project list =================
+             Kept in the same slot as the session list rather than in a separate
+             window: both views are "a list you act on", and swapping them in place
+             keeps the search box, sort control and action bar meaningful in both. -->
+
+        <!-- ================= selection summary + actions ================= -->
+        <Border DockPanel.Dock="Bottom" Margin="0,12,0,0" CornerRadius="7"
+                Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}"
+                BorderThickness="1" Padding="12,9">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock x:Name="SelectionText" FontWeight="SemiBold"
+                               Text="{markup:Tr sel.none}" />
+                    <TextBlock x:Name="SelectionDetail" Style="{StaticResource Muted}"
+                               Margin="0,2,0,0" Text="{markup:Tr sel.tickHint}" />
+                </StackPanel>
+
+                <!-- Column 1 is a *column* of two action rows, not a single Auto stack.
+                     Both rows used to live in one Auto-sized StackPanel, so their widths
+                     ADDED: the bar's right edge ran to x=2088 inside a 1500px window and
+                     the open buttons were rendered off-screen and unclickable. The
+                     buttons now sit in their own row that spans both columns, so the
+                     label and the buttons cannot fight over horizontal space. -->
+                <Grid Grid.Column="1" VerticalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- conversation actions -->
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,7"
+                                x:Name="ConversationActionRow">
+                        <Button x:Name="OpenChamberButton" Style="{StaticResource PrimaryButton}"
+                                Content="{markup:Tr act.openChamber}" Click="OnOpenChamberClick"
+                                IsDefault="True" />
+                        <Button x:Name="OpenOpencodeButton" Content="{markup:Tr act.openOpencode}"
+                                Click="OnOpenOpencodeClick" />
+                        <Button x:Name="CopyButton" Content="{markup:Tr act.copyIds}"
+                                Click="OnCopyClick" />
+                    </StackPanel>
+
+                    <!-- project & workspace, driven from the ticked conversations -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal"
+                                x:Name="ProjectActionRow">
+                        <TextBlock Text="{markup:Tr act.projectGroup}" Style="{StaticResource Muted}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Button x:Name="ExplorerButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr act.openExplorer}" Margin="0"
+                                Click="OnOpenExplorerClick" />
+                        <Button x:Name="TerminalButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr act.openTerminal}" Margin="6,0,0,0"
+                                Click="OnOpenTerminalClick" />
+                        <Button x:Name="EditorButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr act.openEditor}" Margin="6,0,0,0"
+                                Click="OnOpenEditorClick" />
+                        <Button x:Name="ProjectButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr act.openProject}" Margin="6,0,0,0"
+                                Click="OnOpenProjectClick" />
+                        <Button x:Name="OcProjectButton" Style="{StaticResource PrimaryButton}"
+                                Content="{markup:Tr act.openSet}" Margin="6,0,0,0"
+                                Click="OnOpenProjectSetClick"
+                                ToolTip="{markup:Tr act.openSetTip}" />
+                    </StackPanel>
+
+                    <!-- project view: act on the highlighted project row instead.
+                         Row 2 so the two session-view rows above it keep their shape. -->
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" x:Name="ProjectOpenRow"
+                                Visibility="Collapsed">
+                        <TextBlock Text="{markup:Tr proj.openGroup}" Style="{StaticResource Muted}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Button x:Name="ProjectOcButton" Style="{StaticResource PrimaryButton}"
+                                Content="{markup:Tr act.openSet}"
+                                Click="OnProjectOpenSetClick"
+                                ToolTip="{markup:Tr act.openSetTip}" />
+                        <Button x:Name="ProjectExplorerButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr proj.openExplorer}" Margin="6,0,0,0"
+                                Click="OnProjectOpenExplorerClick" />
+                        <Button x:Name="ProjectTerminalButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr act.openTerminal}" Margin="6,0,0,0"
+                                Click="OnProjectOpenTerminalClick" />
+                        <Button x:Name="ProjectEditorButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr act.openEditor}" Margin="6,0,0,0"
+                                Click="OnProjectOpenEditorClick" />
+                        <Button x:Name="ProjectOpencodeButton" Style="{StaticResource IconButton}"
+                                Content="{markup:Tr proj.openInOpencode}" Margin="6,0,0,0"
+                                Click="OnProjectOpenInOpencodeClick" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- ================= status ================= -->
+        <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="2,8,0,0"
+                   Style="{StaticResource Muted}" TextTrimming="CharacterEllipsis" />
+
+        <!-- ================= list (must stay last: it fills the DockPanel) ============ -->
+        <!-- ================= the two views =================
+             One Grid, not two DockPanel children.
+
+             A DockPanel hands the leftover space to its LAST child and gives every
+             other child a docked strip. ProjectPanel sat in the middle with no Dock
+             set, so it defaulted to Left and took a full-height column; the action bar
+             and status line declared after it were pushed out to x=1862 inside a
+             window ending at x=1806, i.e. entirely off-screen and unclickable.
+             The two views are mutually exclusive (one Collapsed while the other is
+             Visible), so they belong in the same slot, overlapping. -->
+        <Grid>
+        <Border Grid.Column="0" Background="{StaticResource Surface}"
+                BorderBrush="{StaticResource Border}" BorderThickness="1"
+                CornerRadius="7" Margin="0,0,0,12" Visibility="Collapsed"
+                x:Name="ProjectPanel">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- project-only controls: filter, sort, hide-missing -->
+                <Grid Grid.Row="0" Margin="10,8,10,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="{StaticResource SurfaceAlt}"
+                            BorderBrush="{StaticResource Border}" BorderThickness="1"
+                            CornerRadius="7" Height="30" Margin="0,0,10,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="&#xE721;" Margin="9,0,0,0"
+                                       FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                       Foreground="{StaticResource Subtle}"
+                                       VerticalAlignment="Center" />
+                            <TextBox x:Name="ProjectSearchBox" Grid.Column="1"
+                                     BorderThickness="0" Background="Transparent"
+                                     Foreground="#E2E6EE" CaretBrush="#E2E6EE" Padding="7,0"
+                                     VerticalContentAlignment="Center"
+                                     TextChanged="OnProjectSearchChanged" />
+                            <TextBlock x:Name="ProjectSearchHint" Grid.Column="1" Margin="10,0,0,0"
+                                       Text="{markup:Tr search.placeholder}" IsHitTestVisible="False"
+                                       Foreground="{StaticResource Subtle}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource Muted}" VerticalAlignment="Center"
+                                   Margin="0,0,8,0" Text="{markup:Tr proj.sortBy}" />
+                        <ComboBox x:Name="ProjectSortBox" Width="180" MaxDropDownHeight="320"
+                                  Style="{StaticResource DarkCombo}"
+                                  SelectionChanged="OnProjectSortChanged"
+                                  VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <CheckBox x:Name="HideMissingCheck" Grid.Column="2" Margin="14,0,0,0"
+                              Style="{StaticResource DarkCheck}" IsChecked="True"
+                              Checked="OnHideMissingChanged" Unchecked="OnHideMissingChanged"
+                              Content="{markup:Tr proj.hideMissing}" />
+                </Grid>
+
+                <ListView Grid.Row="1" x:Name="ProjectList"
+                          ItemContainerStyle="{StaticResource RowStyle}"
+                          Background="Transparent" BorderThickness="0"
+                          AlternationCount="2"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          SelectionChanged="OnProjectSelectionChanged"
+                          MouseDoubleClick="OnProjectDoubleClick">
+                    <ListView.View>
+                        <!-- ColumnHeaderContainerStyle, not ColumnHeaderStyle: the latter
+                             does not exist on GridView (MC3072). -->
+                        <GridView ColumnHeaderContainerStyle="{StaticResource ProjectColumnHeader}">
+                            <GridViewColumn Header="{markup:Tr proj.colName}" Width="330">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <!-- The folder icon carries the project's colour,
+                                             matching OpenChamber's own sidebar, so the same
+                                             project is recognisably the same in both apps.
+                                             Path is bound through ProjectRow; this binds a
+                                             brush the view model resolved. -->
+                                        <StackPanel Orientation="Horizontal" Margin="9,0,0,0">
+                                            <Path Data="M 1,3 L 1,17 L 15,17 L 15,6 L 8,6 L 6,3 Z"
+                                                  Stroke="{Binding ColorHex}" StrokeThickness="1.5"
+                                                  Fill="Transparent" VerticalAlignment="Center"
+                                                  RenderTransformOrigin="0.3,0.5">
+                                                <Path.RenderTransform>
+                                                    <ScaleTransform ScaleX="0.82" ScaleY="0.82" />
+                                                </Path.RenderTransform>
+                                            </Path>
+                                            <TextBlock Text="{Binding Name}" Margin="9,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Path}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="{markup:Tr proj.colSessions}" Width="92"
+                                            DisplayMemberBinding="{Binding SessionCount}" />
+                            <GridViewColumn Header="{markup:Tr proj.colLast}" Width="150"
+                                            DisplayMemberBinding="{Binding LastSeenText}" />
+                            <GridViewColumn Header="{markup:Tr proj.colColor}" Width="86"
+                                            DisplayMemberBinding="{Binding ColorLabel}" />
+                            <GridViewColumn Header="{markup:Tr proj.colPath}" Width="560">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Path}" Margin="9,0,9,0"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="#8E97A6" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <TextBlock Grid.Row="2" x:Name="ProjectStatus" Style="{StaticResource Muted}"
+                           Margin="11,7,11,7" Text="{markup:Tr proj.loading}" />
+            </Grid>
+        </Border>
+
+        <!-- x:Name is load-bearing. ApplyView used to hide only the ListView inside this
+             Border, which left an empty but still-Visible, still-Stretch, opaque panel
+             stacked on top of ProjectPanel in the shared Grid. It swallowed every click
+             in the project view while showing nothing, which is what "the whole project
+             screen looks like it never loaded" actually was. The Border must be what
+             gets collapsed. -->
+        <Border x:Name="SessionPanel" Background="{StaticResource Surface}"
+                BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8"
+                ClipToBounds="True">
+            <ListView x:Name="List"
+                      Background="Transparent" BorderThickness="0"
+                      Foreground="#E2E6EE"
+                      SelectionMode="Single"
+                      AlternationCount="2"
+                      ItemContainerStyle="{StaticResource RowStyle}"
+                      MouseDoubleClick="OnListDoubleClick"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListView.View>
+                    <GridView ColumnHeaderContainerStyle="{StaticResource ColumnHeader}">
+                        <!-- checkbox drives multi-select; the list selection only moves focus -->
+                        <GridViewColumn x:Name="ColPick" Header="{markup:Tr col.pick}" Width="40">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsChosen, Mode=TwoWay}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Cursor="Hand"
+                                              Tag="{Binding}" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+
+                        <GridViewColumn x:Name="ColUpdated" Header="{markup:Tr col.updated}"
+                                        Width="132" DisplayMemberBinding="{Binding UpdatedText}" />
+                        <GridViewColumn x:Name="ColMsgs" Header="{markup:Tr col.msgs}"
+                                        Width="60" DisplayMemberBinding="{Binding Messages}" />
+                        <GridViewColumn x:Name="ColTitle" Header="{markup:Tr col.title}"
+                                        Width="380" DisplayMemberBinding="{Binding DisplayTitle}" />
+                        <GridViewColumn x:Name="ColFolder" Header="{markup:Tr col.folder}"
+                                        Width="220" DisplayMemberBinding="{Binding DirectoryLeaf}" />
+                        <GridViewColumn x:Name="ColId" Header="{markup:Tr col.id}"
+                                        Width="290" DisplayMemberBinding="{Binding Id}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Border>
+        </Grid>
+
+    </DockPanel>
+    </Border>
+</Window>

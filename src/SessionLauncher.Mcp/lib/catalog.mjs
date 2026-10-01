@@ -1,0 +1,180 @@
+// lib/catalog.mjs
+//
+// Catalog resolution + parsing for SessionLauncher.Mcp.
+//
+// The catalog is a GitHub-flavored markdown table listing top-level opencode
+// sessions. This module owns the SINGLE resolution order used by both the JS
+// MCP server and the (separate) WPF host: whoever reads the catalog must find
+// the same file. Do not duplicate the order anywhere else.
+//
+// Resolution order (first path that exists wins):
+//   1. <exeDir>/data/TOP-LEVEL-SESSIONS.md
+//   2. %LOCALAPPDATA%\SessionLauncher\TOP-LEVEL-SESSIONS.md
+//   3. <catalog dir>\TOP-LEVEL-SESSIONS.md
+//   4. <projectRoot>/data/TOP-LEVEL-SESSIONS.md
+//
+// Paths 1 and 4 are derived from this file's own location, so the layout is
+// assumed to be:
+//   <projectRoot>/src/SessionLauncher.Mcp/lib/catalog.mjs
+// where exeDir = <projectRoot>/src/SessionLauncher.Mcp and the project root is
+// the SessionLauncher directory (the one containing `data/`).
+
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** Directory containing this module: <projectRoot>/src/SessionLauncher.Mcp/lib */
+const libDir = dirname(fileURLToPath(import.meta.url));
+/** The MCP server directory: <projectRoot>/src/SessionLauncher.Mcp */
+export const exeDir = dirname(libDir);
+/** The project root: the directory that contains `data/` and `src/`. */
+export const projectRoot = dirname(dirname(exeDir));
+
+const CATALOG_FILENAME = 'TOP-LEVEL-SESSIONS.md';
+
+/**
+ * The canonical store, shared by the GUI and this MCP server.
+ *
+ * It leads the resolution order and is where refresh_catalog writes. The exe-local
+ * copy under <exeDir>/data is only a portable fallback: if the writer targeted it
+ * while the reader preferred the canonical file, the two would silently drift
+ * apart and show different session counts.
+ */
+const CANONICAL_CATALOG_PATH = '<catalog dir>\\' + CATALOG_FILENAME;
+
+/**
+ * All candidate catalog paths, in resolution order. Entries may be null when the
+ * required environment variable is missing.
+ * @returns {(string|null)[]}
+ */
+export function catalogCandidatePaths() {
+  const localAppData = process.env.LOCALAPPDATA;
+  return [
+    CANONICAL_CATALOG_PATH,
+    join(exeDir, 'data', CATALOG_FILENAME),
+    localAppData ? join(localAppData, 'SessionLauncher', CATALOG_FILENAME) : null,
+    join(projectRoot, 'data', CATALOG_FILENAME),
+  ];
+}
+
+/**
+ * Resolve the catalog path for reading. Returns the first candidate that
+ * exists, or throws an Error naming every path that was tried.
+ * @returns {string}
+ */
+export function resolveCatalogPath() {
+  const candidates = catalogCandidatePaths();
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+  const tried = candidates
+    .map((p, i) => `  ${i + 1}. ${p ?? '(skipped: LOCALAPPDATA not set)'}`)
+    .join('\n');
+  throw new Error(`Could not find ${CATALOG_FILENAME}. Tried:\n${tried}`);
+}
+
+/**
+ * Resolve where the generator should WRITE the catalog.
+ *
+ * Always the canonical path when its directory exists, so the GUI and this server
+ * keep converging on one file. Falls back to the project data directory on a
+ * machine without that volume.
+ * @returns {string}
+ */
+export function resolveCatalogWritePath() {
+  if (existsSync(dirname(CANONICAL_CATALOG_PATH))) return CANONICAL_CATALOG_PATH;
+  return join(projectRoot, 'data', CATALOG_FILENAME);
+}
+
+/**
+ * Split a table row into cells on UNESCAPED pipes only. `\|` is unescaped to a
+ * literal pipe; every other backslash is preserved (Windows paths in directory
+ * cells must survive untouched).
+ * @param {string} line
+ * @returns {string[]}
+ */
+function splitRow(line) {
+  const cells = [];
+  let cur = '';
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === '\\' && line[i + 1] === '|') {
+      cur += '|';
+      i += 2;
+      continue;
+    }
+    if (c === '|') {
+      cells.push(cur);
+      cur = '';
+      i += 1;
+      continue;
+    }
+    cur += c;
+    i += 1;
+  }
+  cells.push(cur);
+  // Drop the empty leading/trailing cells produced by the outer pipes.
+  if (cells.length && cells[0].trim() === '') cells.shift();
+  if (cells.length && cells[cells.length - 1].trim() === '') cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+/** Strip surrounding backticks from a cell (directory / session id cells). */
+function stripBackticks(cell) {
+  return cell.replace(/^`+/, '').replace(/`+$/, '');
+}
+
+/** True for the `| --- | --- |` separator row. */
+function isSeparator(cells) {
+  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c));
+}
+
+/** True for the `| # | updated | ... | session id |` header row. */
+function isHeader(cells) {
+  return cells.length >= 7 && cells[0] === '#' && cells[6].toLowerCase() === 'session id';
+}
+
+/**
+ * Parse the markdown catalog into session records.
+ * @param {string} markdown
+ * @returns {{id:string,title:string,directory:string,agent:string,updated:string,msgs:number}[]}
+ */
+export function parseCatalog(markdown) {
+  const sessions = [];
+  for (const rawLine of markdown.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line.startsWith('|')) continue;
+    const cells = splitRow(line);
+    if (cells.length < 7) continue;
+    if (isHeader(cells) || isSeparator(cells)) continue;
+
+    const msgs = Number.parseInt(cells[2], 10);
+    sessions.push({
+      id: stripBackticks(cells[6]),
+      title: cells[5],
+      directory: stripBackticks(cells[4]),
+      agent: cells[3],
+      updated: cells[1],
+      msgs: Number.isNaN(msgs) ? 0 : msgs,
+    });
+  }
+  return sessions;
+}
+
+/**
+ * Resolve, read and parse the catalog in one step.
+ * @returns {{id:string,title:string,directory:string,agent:string,updated:string,msgs:number}[]}
+ */
+export function loadCatalog() {
+  const path = resolveCatalogPath();
+  const text = readFileSync(path, 'utf8');
+  return parseCatalog(text);
+}
+
+/** Escape a value for use inside a markdown table cell. */
+export function escapeCell(value) {
+  return String(value ?? '')
+    .replace(/\r?\n/g, ' ')
+    .replace(/\|/g, '\\|');
+}

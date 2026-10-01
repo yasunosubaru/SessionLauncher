@@ -1,0 +1,9 @@
+<Application x:Class="SessionLauncher.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="ChromeBrush" Color="#1E2229" />
+        <SolidColorBrush x:Key="SubtleBrush" Color="#8B93A3" />
+    </Application.Resources>
+</Application>

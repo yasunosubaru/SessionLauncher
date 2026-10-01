@@ -1,0 +1,516 @@
+// OpenChamberBridge.cs
+//
+// Reads and drives OpenChamber's own project state, so "open project" means
+// open it IN OPENCHAMBER rather than spawning a terminal somewhere.
+//
+// WHY THIS FILE EXISTS, and the evidence behind every claim
+//
+// openchamber:// cannot do it. The only protocol literals in app.asar are
+// openchamber://connect, openchamber://focus and openchamber://session, and the
+// bundle's other entry point, parseDeepLinkHash, is a GitHub-style
+// operations/operations-tag scroll anchor that opens nothing. So a project cannot
+// be selected by deep link.
+//
+// A project is a record in
+//     %USERPROFILE%\.config\openchamber\settings.json
+// under "projects", an array of objects shaped exactly:
+//     { id, path, label?, color?, addedAt, lastOpenedAt, sidebarCollapsed }
+// and the one on screen is whichever record "activeProjectId" names. Verified on
+// this machine: 4 records, activeProjectId =
+//     path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy9jYXBzdG9uZQ
+// which base64url-decodes to "F:/.../capstone", matching lastDirectory.
+//
+// The id scheme, confirmed by decoding every record present:
+//     id = "path_" + base64url(pathWithForwardSlashes)
+//   path_RDovUHJvamVjdHM               -> V:/Developer
+//   path_QzovVXNlcnMvZGVtbw             -> C:/Users/demo
+//   path_RjovZXhhbXBsZS...Nvb3Rlcy9jYXBzdG9uZQ           -> F:/.../sample
+// So it is computed, not opaque: any path can be projected into the scheme.
+//
+// A WORKSPACE is the other thing the user asked for, and the sidebar decides what
+// it is. settings.json carries:
+//     sidebarSessionGroupingMode = "by-worktree"
+//     sidebarProjectDisplayMode  = "all"
+//     sidebarProjectSortOrder    = "manual"
+//     sidebarWorktreeSortOrder   = "recent"
+// "by-worktree" is why the sample node in the UI holds research-orchestrator,
+// 示例研究项目..., and the five Research:... conversations: all of
+// them are the 11 sessions whose directory is F:/.../sample. Confirmed against the
+// catalog. A workspace is therefore a PROJECT together with its worktree grouping,
+// and the honest way to open one is to open the project and let the sidebar group.
+//
+// Writing settings.json is the only handle. That is a destructive-on-crash risk and
+// is mitigated, not wished away: see WriteSettings.
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace SessionLauncher.App.Services;
+
+/// <summary>One project as OpenChamber stores it.</summary>
+public sealed class OpenChamberProject
+{
+    /// <summary>OpenChamber's identifier, i.e. <c>path_</c> + base64url of the path.</summary>
+    public required string Id { get; init; }
+
+    /// <summary>Absolute path, in Windows backslash form as OpenChamber writes it.</summary>
+    public required string Path { get; init; }
+
+    /// <summary>Display name. OpenChamber leaves this absent for some records.</summary>
+    public string? Label { get; init; }
+
+    /// <summary>Optional accent name, e.g. "comment" or "number".</summary>
+    public string? Color { get; init; }
+
+    /// <summary>Epoch milliseconds.</summary>
+    public long AddedAt { get; init; }
+
+    /// <summary>Epoch milliseconds.</summary>
+    public long LastOpenedAt { get; init; }
+
+    /// <summary>Whether the sidebar node is folded shut.</summary>
+    public bool SidebarCollapsed { get; init; }
+}
+
+/// <summary>Reads and rewrites OpenChamber's project list.</summary>
+public static class OpenChamberBridge
+{
+    /// <summary>Prefix every OpenChamber project id carries.</summary>
+    public const string IdPrefix = "path_";
+
+    /// <summary>Where OpenChamber keeps its settings, relative to the user profile.</summary>
+    public const string SettingsRelativePath =
+        @".config\openchamber\settings.json";
+
+    /// <summary>Settings candidates, first hit wins.</summary>
+    public static IReadOnlyList<string> SettingsCandidates()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+        return new[]
+        {
+            Path.Combine(home, ".config", "openchamber", "settings.json"),
+            Path.Combine(appData, "openchamber", "settings.json"),
+        };
+    }
+
+    /// <summary>Locate the settings file, or null when OpenChamber is not set up.</summary>
+    public static string? ResolveSettingsPath()
+        => SettingsCandidates().FirstOrDefault(File.Exists);
+
+    /// <summary>
+    /// Project the path into OpenChamber's id scheme.
+    /// </summary>
+    /// <remarks>
+    /// Forward slashes, no trailing separator, then base64url WITHOUT padding.
+    /// Padding is the detail that matters: a '=' would produce an id OpenChamber
+    /// never generates, and the record would sit in the list unreferenced.
+    /// </remarks>
+    public static string MakeId(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("a project path is required", nameof(path));
+
+        var normalised = path.Trim().Replace('\\', '/').TrimEnd('/');
+        if (normalised.Length == 0)
+            throw new ArgumentException("a project path is required", nameof(path));
+
+        return IdPrefix + Convert.ToBase64String(Encoding.UTF8.GetBytes(normalised))
+                                 .TrimEnd('=')
+                                 .Replace('+', '-')
+                                 .Replace('/', '_');
+    }
+
+    /// <summary>Reverse of <see cref="MakeId"/>; null when the id is not in the scheme.</summary>
+    public static string? DecodeId(string? id)
+    {
+        if (string.IsNullOrEmpty(id) || !id.StartsWith(IdPrefix, StringComparison.Ordinal))
+            return null;
+
+        var body = id[IdPrefix.Length..];
+        if (body.Length == 0) return null;
+
+        // Put the padding back before decoding; a length that is not a multiple of 4
+        // cannot have come from this scheme.
+        var padded = body.Replace('-', '+').Replace('_', '/');
+        padded += (padded.Length % 4) switch { 2 => "==", 3 => "=", _ => string.Empty };
+
+        try
+        {
+            var bytes = Convert.FromBase64String(padded);
+            var text = Encoding.UTF8.GetString(bytes);
+            return text.Length == 0 ? null : text;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Read OpenChamber's projects, or an empty list when it has none yet.</summary>
+    public static IReadOnlyList<OpenChamberProject> ReadProjects()
+    {
+        var path = ResolveSettingsPath();
+        if (path is null) return Array.Empty<OpenChamberProject>();
+
+        return ReadProjectsFrom(File.ReadAllText(path, Encoding.UTF8));
+    }
+
+    /// <summary>Parse the projects array out of a settings document.</summary>
+    /// <remarks>
+    /// Total on purpose: settings.json is rewritten by a live app, so a read can catch
+    /// it mid-write. A launcher must not die because OpenChamber was saving.
+    /// </remarks>
+    public static IReadOnlyList<OpenChamberProject> ReadProjectsFrom(string json)
+    {
+        var result = new List<OpenChamberProject>();
+        if (string.IsNullOrWhiteSpace(json)) return result;
+
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(json);
+        }
+        catch (JsonException)
+        {
+            return result;
+        }
+
+        if (root?["projects"] is not JsonArray array) return result;
+
+        foreach (var node in array)
+        {
+            if (node is not JsonObject obj) continue;
+            var id = ReadString(obj["id"]);
+            var dir = ReadString(obj["path"]);
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(dir)) continue;
+
+            result.Add(new OpenChamberProject
+            {
+                Id = id,
+                Path = dir,
+                Label = ReadString(obj["label"]),
+                Color = ReadString(obj["color"]),
+                AddedAt = ReadLong(obj["addedAt"]),
+                LastOpenedAt = ReadLong(obj["lastOpenedAt"]),
+                SidebarCollapsed = ReadBool(obj["sidebarCollapsed"]),
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Ensure a project record exists and make it the active one.
+    /// </summary>
+    /// <remarks>
+    /// Returns the id that was activated. The record is created if absent, with the
+    /// leaf folder name as the label, because a project with no label renders as a bare
+    /// path in the sidebar.
+    /// <para>
+    /// <b>This rewrites a live app's settings file, and nothing in the UI calls it
+    /// any more.</b> It is kept because the id scheme it implements is load-bearing for
+    /// the colour lookup, and because the tests pin that scheme. The write itself is
+    /// atomic (temp file plus replace) so OpenChamber never sees a truncated document,
+    /// but it is a read-modify-write against a file a running Electron process owns,
+    /// with no locking — so a concurrent OpenChamber save can be clobbered. Opening a
+    /// project is now done with the session deep link instead; see
+    /// <c>LauncherService.OpenSessionSetInOpenChamber</c>, which writes nothing.
+    /// </remarks>
+    public static string Activate(string projectPath, string? label = null)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath))
+            throw new ArgumentException("a project path is required", nameof(projectPath));
+
+        if (!Directory.Exists(projectPath))
+            throw new DirectoryNotFoundException($"Project path not found: {projectPath}");
+
+        var settingsPath = ResolveSettingsPath()
+            ?? throw new FileNotFoundException(
+                "OpenChamber settings.json was not found; is OpenChamber installed?");
+
+        var id = MakeId(projectPath);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        var json = File.ReadAllText(settingsPath, Encoding.UTF8);
+        var root = JsonNode.Parse(json) as JsonObject
+            ?? throw new InvalidDataException("OpenChamber settings.json is not a JSON object");
+
+        if (root["projects"] is not JsonArray projects)
+        {
+            projects = new JsonArray();
+            root["projects"] = projects;
+        }
+
+        var existing = projects
+            .OfType<JsonObject>()
+            .FirstOrDefault(p => p["id"]?.GetValue<string>() == id);
+
+        if (existing is null)
+        {
+            projects.Add(new JsonObject
+            {
+                ["id"] = id,
+                ["path"] = projectPath,
+                ["label"] = label ?? LeafName(projectPath),
+                ["addedAt"] = now,
+                ["lastOpenedAt"] = now,
+                ["sidebarCollapsed"] = false,
+            });
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(label)) existing["label"] = label;
+            existing["lastOpenedAt"] = now;
+            // A project you just asked to open should not stay folded in the sidebar.
+            existing["sidebarCollapsed"] = false;
+        }
+
+        root["activeProjectId"] = id;
+
+        // Deliberately NOT writing sidebarSessionGroupingMode. It is still sitting in
+        // this machine's settings.json as "by-worktree", which made it look like the
+        // sidebar shape is something to configure. It is not: OpenChamber's own source
+        // (useSessionDisplayStore.migrateSessionDisplayState, v6) deletes
+        // sessionGroupingMode outright, because "the projects view always groups by
+        // worktree". Grepping the bundle for the key returns nothing. Writing it would
+        // be a no-op dressed up as a feature.
+        root["sidebarProjectDisplayMode"] = "all";
+
+        WriteSettings(settingsPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        return id;
+    }
+
+    /// <summary>The last directory OpenChamber had open, or null.</summary>
+    public static string? ActiveProjectPath()
+    {
+        var path = ResolveSettingsPath();
+        if (path is null) return null;
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8)) as JsonObject;
+            var id = root?["activeProjectId"]?.GetValue<string>();
+            return id is null ? null : DecodeId(id);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Last path segment, used as a default label.</summary>
+    public static string LeafName(string path)
+    {
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+
+        // A drive root has no leaf; showing "C:\" is more useful than an empty label.
+        return string.IsNullOrEmpty(name) ? trimmed : name;
+    }
+
+    /// <summary>Write the settings document atomically.</summary>
+    private static void WriteSettings(string path, string content)
+    {
+        var temp = path + ".sessionlauncher.tmp";
+        File.WriteAllText(temp, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        // Replace is atomic on NTFS and leaves no window where the file is missing.
+        // Delete first because File.Replace throws if the destination is absent.
+        if (File.Exists(path)) File.Delete(path);
+        File.Move(temp, path);
+    }
+
+    /// <summary>
+    /// Read a string field, or null when it is absent or of another type.
+    /// </summary>
+    /// <remarks>
+    /// NOT <c>GetValue&lt;string&gt;()</c>: that throws InvalidOperationException when the
+    /// JSON value is a number, and these files belong to a live application, so a
+    /// hand-edited or differently-serialised field must not take the launcher down with
+    /// it. A non-string is simply "no value".
+    /// </remarks>
+    private static string? ReadString(JsonNode? node)
+    {
+        if (node is null) return null;
+
+        try
+        {
+            return node.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    private static bool ReadBool(JsonNode? node)
+    {
+        if (node is null) return false;
+
+        try
+        {
+            return node.GetValueKind() == JsonValueKind.True;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static long ReadLong(JsonNode? node)
+    {
+        if (node is null) return 0;
+        try
+        {
+            if (node.GetValueKind() == JsonValueKind.Number) return node.GetValue<long>();
+            if (node.GetValueKind() == JsonValueKind.String
+                && long.TryParse(node.GetValue<string>(), NumberStyles.Integer,
+                                 CultureInfo.InvariantCulture, out var parsed))
+                return parsed;
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+        {
+            // A field of an unexpected shape is not worth failing a settings read over.
+        }
+        return 0;
+    }
+
+    /// <summary>Number of assertions checked. Throws on the first failure.</summary>
+    public static int RunSelfTest()
+    {
+        var n = 0;
+        void Check(bool ok, string what)
+        {
+            n++;
+            if (!ok) throw new InvalidOperationException("OpenChamberBridge self-test failed: " + what);
+        }
+        void CheckEqual<T>(T expected, T actual, string what)
+        {
+            n++;
+            if (!EqualityComparer<T>.Default.Equals(expected, actual))
+                throw new InvalidOperationException(
+                    $"OpenChamberBridge self-test failed: {what} (expected '{expected}', got '{actual}')");
+        }
+
+        // The id scheme, against ids actually present on this machine.
+        CheckEqual("path_RDovUHJvamVjdHM", MakeId("<repo>"),
+                   "<repo> projects to the observed id");
+        CheckEqual("path_QzovVXNlcnMvZGVtbw", MakeId("C:\\Users\\demo"),
+                   "C:\\Users\\demo projects to the observed id");
+        CheckEqual("path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM",
+                   MakeId("F:\\\u6587\u4ef6\u5939 \u8001\u7248\\personal content\\\u8bfe\u7a0b\u8d44\u6599\\\u5176\u4ed6\\\u8bba\u6587"),
+                   "the CJK sample path projects to the observed id");
+
+        // Decoding is the exact inverse, including CJK.
+        CheckEqual("V:/Developer", DecodeId("path_RDovUHJvamVjdHM"), "decode V:/Developer");
+        CheckEqual("C:/Users/demo", DecodeId("path_QzovVXNlcnMvZGVtbw"), "decode C:/Users/demo");
+        CheckEqual("F:/\u6587\u4ef6\u5939 \u8001\u7248/personal content/\u8bfe\u7a0b\u8d44\u6599/\u5176\u4ed6/\u8bba\u6587",
+                   DecodeId("path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM"),
+                   "decode the CJK sample path");
+        CheckEqual(MakeId("F:\\a\\b"), MakeId("F:/a/b/"), "separators and trailing slash normalise");
+        CheckEqual(MakeId("F:\\a\\b"), MakeId("  F:\\a\\b  "), "surrounding whitespace is trimmed");
+
+        // base64url alphabet: no '+' or '/' may survive, and no '=' padding.
+        foreach (var p in new[] { "C:\\a+b", "C:\\a/b", "F:\\\u6587\u4ef6", "C:\\~~" })
+        {
+            var id = MakeId(p);
+            Check(!id.Contains('+') && !id.Contains('/') && !id.Contains('='),
+                  $"id for '{p}' is base64url without padding");
+        }
+
+        // Round trip on a CJK path with a trailing separator.
+        var cjk = "F:\\\u6587\u4ef6\u5939 \u8001\u7248\\personal content\\\u8bfe\u7a0b\u8d44\u6599\\\u5176\u4ed6\\\u8bba\u6587";
+        CheckEqual("F:/\u6587\u4ef6\u5939 \u8001\u7248/personal content/\u8bfe\u7a0b\u8d44\u6599/\u5176\u4ed6/\u8bba\u6587",
+                   DecodeId(MakeId(cjk)), "CJK path round-trips through the id");
+
+        // Rejections.
+        Check(DecodeId(null) is null, "a null id decodes to null");
+        Check(DecodeId("") is null, "an empty id decodes to null");
+        Check(DecodeId("something-else") is null, "a foreign id decodes to null");
+        Check(DecodeId("path_") is null, "a bare prefix decodes to null");
+        Check(DecodeId("path_!!!!") is null, "an undecodable body decodes to null, not a throw");
+        Check(Throws(() => MakeId("")), "an empty path is rejected");
+        Check(Throws(() => MakeId("   ")), "a whitespace path is rejected");
+        Check(Throws(() => MakeId("/")), "a lone separator is rejected");
+
+        // Parsing the real settings shape.
+        var doc = """
+        {
+          "sidebarSessionGroupingMode": "by-worktree",
+          "activeProjectId": "path_QzovVXNlcnMvZGVtbw",
+          "projects": [
+            { "id": "path_A", "path": "F:\\a", "label": "A", "color": "comment",
+              "addedAt": 1790597004438, "lastOpenedAt": 1790597004439,
+              "sidebarCollapsed": false },
+            { "id": "path_B", "path": "C:\\Users\\demo" }
+          ]
+        }
+        """;
+        var projects = ReadProjectsFrom(doc);
+        CheckEqual(2, projects.Count, "both projects parse");
+        CheckEqual("F:\\a", projects[0].Path, "path is read verbatim, backslashes intact");
+        CheckEqual("A", projects[0].Label, "label is read");
+        CheckEqual("comment", projects[0].Color, "color is read");
+        CheckEqual(1790597004438L, projects[0].AddedAt, "addedAt is read");
+        Check(!projects[0].SidebarCollapsed, "sidebarCollapsed is read");
+        Check(projects[1].Label is null, "an absent label is null, not a throw");
+        CheckEqual(0L, projects[1].AddedAt, "an absent addedAt is 0");
+
+        // Junk must not throw: the file belongs to a live app.
+        CheckEqual(0, ReadProjectsFrom("").Count, "empty input yields nothing");
+        CheckEqual(0, ReadProjectsFrom("   ").Count, "whitespace input yields nothing");
+        CheckEqual(0, ReadProjectsFrom("{ not json").Count, "malformed json yields nothing");
+        CheckEqual(0, ReadProjectsFrom("{}").Count, "a document with no projects yields nothing");
+        CheckEqual(0, ReadProjectsFrom("""{"projects": 5}""").Count, "a non-array projects yields nothing");
+        CheckEqual(0, ReadProjectsFrom("""{"projects": [1, "two", null]}""").Count,
+                   "non-object entries are skipped");
+        CheckEqual(0, ReadProjectsFrom("""{"projects": [{"id":"x","path":123}]}""").Count,
+                   "an entry with a non-string path is skipped");
+        CheckEqual(0, ReadProjectsFrom("""{"projects": [{"id":456,"path":"C:\\\\a"}]}""").Count,
+                   "an entry with a non-string id is skipped");
+        CheckEqual(0, ReadProjectsFrom("""{"projects": [{"path":"C:\\\\a"}]}""").Count,
+                   "an entry with no id is skipped");
+        CheckEqual(1, ReadProjectsFrom("""{"projects": [{"id":"x","path":"C:\\\\a","sidebarCollapsed":"yes"}]}""").Count,
+                   "a non-boolean sidebarCollapsed is not a throw");
+        Check(!ReadProjectsFrom("""{"projects": [{"id":"x","path":"C:\\\\a","sidebarCollapsed":"yes"}]}""")[0].SidebarCollapsed,
+              "a non-boolean sidebarCollapsed reads as false");
+        CheckEqual(1, ReadProjectsFrom("""{"projects": [{"id":"x","path":"C:\\\\a","addedAt":"1790597004438"}]}""").Count,
+                   "addedAt as a numeric string still parses");
+        CheckEqual(1790597004438L, ReadProjectsFrom("""{"projects":[{"id":"x","path":"C:\\\\a","addedAt":"1790597004438"}]}""")[0].AddedAt,
+                   "addedAt string value is converted");
+
+        // LeafName.
+        CheckEqual("paper", LeafName("F:\\a\\paper"), "leaf of a normal path");
+        CheckEqual("paper", LeafName("F:\\a\\paper\\"), "trailing separator is ignored");
+        CheckEqual("F:", LeafName("F:\\"), "a drive root falls back to the drive");
+        CheckEqual("Users", LeafName("C:\\Users"), "leaf of a two-segment path");
+
+        // A document that round-trips through activate's own shape.
+        var activateShaped = JsonNode.Parse(doc)!.AsObject();
+        activateShaped["activeProjectId"] = MakeId("F:\\a");
+        activateShaped["projects"]!.AsArray().Add(new JsonObject
+        {
+            ["id"] = MakeId("F:\\a"), ["path"] = "F:\\a", ["label"] = "a",
+            ["addedAt"] = 1, ["lastOpenedAt"] = 2, ["sidebarCollapsed"] = false,
+        });
+        var reparsed = ReadProjectsFrom(activateShaped.ToJsonString());
+        CheckEqual(3, reparsed.Count, "an appended project is seen on the next read");
+        Check(reparsed.Any(p => p.Id == MakeId("F:\\a")), "the appended project is the one activated");
+
+        return n;
+
+        static bool Throws(Action action)
+        {
+            try { action(); return false; }
+            catch (ArgumentException) { return true; }
+        }
+    }
+}
