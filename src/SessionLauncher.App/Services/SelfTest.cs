@@ -33,6 +33,7 @@ namespace SessionLauncher.App.Services
             // counts in rather than dropping them, so one number reports everything.
             _checks += ProjectCatalog.RunSelfTest();
             _checks += ProjectSort.RunSelfTest();
+            _checks += SessionCatalog.RunSelfTest();
             _checks += WorkspaceService.RunSelfTest();
             _checks += OpenChamberBridge.RunSelfTest();
 

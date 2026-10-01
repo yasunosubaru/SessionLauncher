@@ -32,6 +32,22 @@ namespace SessionLauncher.App.Models
         public string DisplayTitle =>
             string.IsNullOrWhiteSpace(Title) ? "(untitled)" : Title;
 
+        /// <summary>
+        /// When the conversation was created, local time.
+        /// </summary>
+        /// <remarks>
+        /// An init property on the record body rather than a ninth positional
+        /// parameter: every existing construction site passes eight positional
+        /// arguments, and adding one would silently recompile them all into a
+        /// different overload.
+        /// <para>
+        /// <see cref="DateTimeOffset.MinValue"/> means "the catalog did not say",
+        /// which is a real state — a catalog written before this column existed
+        /// carries no creation time at all. The UI renders that as an em dash.
+        /// </para>
+        /// </remarks>
+        public DateTimeOffset Created { get; init; } = DateTimeOffset.MinValue;
+
         /// <summary>Short id for the UI, e.g. <c>ses_f171…</c>.</summary>
         public string ShortId => Id.Length <= 12 ? Id : Id[..12];
 

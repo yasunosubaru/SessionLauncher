@@ -89,12 +89,6 @@ namespace SessionLauncher.App
         /// </summary>
         private bool _initializing;
 
-        /// <summary>
-        /// Cancels the in-flight log scan when a new one starts, so a slow scan cannot
-        /// land after a newer one and overwrite it with stale rows.
-        /// </summary>
-        private CancellationTokenSource? _projectScanCts;
-
         public MainWindow()
         {
             // Language and font scale must be applied BEFORE InitializeComponent().

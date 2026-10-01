@@ -30,6 +30,7 @@ $sources = @(
     'Services\Loc.cs'
     'Services\AppSettings.cs'
     'Services\SessionSearch.cs'
+    'Services\SessionCatalog.cs'
     'Services\ProjectCatalog.cs'
     'Services\ProjectSort.cs'
     'Services\WorkspaceService.cs'

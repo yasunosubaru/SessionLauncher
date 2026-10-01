@@ -12,19 +12,36 @@ namespace SessionLauncher.App.Services
     /// Reads the conversation catalog out of a TOP-LEVEL-SESSIONS.md table.
     /// </summary>
     /// <remarks>
-    /// The file is a GitHub-flavored markdown table with a fixed 8-column header:
-    /// <c>| # | updated | msgs | agent | directory | title | session id |</c>.
+    /// The file is a GitHub-flavored markdown table whose columns are matched by
+    /// NAME. Two layouts are in circulation:
+    /// <c>| # | updated | msgs | agent | directory | title | session id |</c> and
+    /// <c>| # | created | updated | msgs | agent | directory | title | session id |</c>.
+    /// A catalog written before <c>created</c> existed still parses, with no creation
+    /// time — see <see cref="RequiredColumns"/> for why that column is optional and
+    /// the rest are not.
+    /// <para>
     /// The <c>directory</c> and <c>session id</c> cells are wrapped in backticks, and
-    /// a pipe inside a title is escaped as <c>\|</c> - so rows cannot be split naively.
+    /// a pipe inside a title is escaped as <c>\|</c> — so rows cannot be split naively.
+    /// </para>
     /// </remarks>
     public sealed class SessionCatalog
     {
         /// <summary>Canonical file name, looked for in each candidate directory.</summary>
         public const string FileName = "TOP-LEVEL-SESSIONS.md";
 
-        /// <summary>Column titles that identify the header row, in order.</summary>
-        private static readonly string[] ExpectedHeader =
+        /// <summary>Column titles the table must carry, whatever order they appear in.</summary>
+        private static readonly string[] RequiredColumns =
             { "#", "updated", "msgs", "agent", "directory", "title", "session id" };
+
+        /// <summary>
+        /// Where the session id sits in every layout this reader understands.
+        /// </summary>
+        /// <remarks>
+        /// A row must be at least this wide to carry an id at all, and the id is
+        /// the one field without which a row is useless — so this is the only
+        /// index the parser ever needs in advance.
+        /// </remarks>
+        private const int IdColumn = 6;
 
         private readonly string _markdownPath;
 
@@ -73,11 +90,11 @@ namespace SessionLauncher.App.Services
             => ProbeCandidatePaths(exeDir).FirstOrDefault(File.Exists);
 
         /// <summary>
-        /// Parse the catalog file.
+        /// Read the file, then parse it.
         /// </summary>
         /// <exception cref="FileNotFoundException">The file does not exist.</exception>
         /// <exception cref="InvalidDataException">
-        /// The table is missing, or its header is not the expected 8 columns.
+        /// The table is missing, or its header does not carry every required column.
         /// </exception>
         public IReadOnlyList<SessionInfo> Load()
         {
@@ -93,62 +110,119 @@ namespace SessionLauncher.App.Services
                 lines = all.ToArray();
             }
 
-            var headerIndex = Array.FindIndex(lines, IsHeaderRow);
-            if (headerIndex < 0)
+            return LoadFromLines(lines, _markdownPath);
+        }
+
+        /// <summary>
+        /// Parse a catalog whose lines have already been read, with no file access.
+        /// </summary>
+        /// <param name="lines">The file's lines, in order.</param>
+        /// <param name="sourceName">A name for error messages.</param>
+        /// <exception cref="InvalidDataException">
+        /// No header row is present, or no header row carries every required column.
+        /// </exception>
+        /// <remarks>
+        /// Columns are resolved BY NAME, never by position. The catalog gained a
+        /// <c>created</c> column, and every reader of this shared file — this one
+        /// and the MCP server's — had the seven original fields hardcoded to
+        /// indexes. A positional reader of a file it did not write is a reader that
+        /// breaks the moment the file is regenerated, and it breaks the OTHER
+        /// reader too, because they share one artifact.
+        /// <para>
+        /// <c>created</c> is deliberately not in <see cref="RequiredColumns"/>: a
+        /// catalog generated before it existed must keep parsing, with no creation
+        /// time rather than with no rows.
+        /// </para>
+        /// </remarks>
+        internal static IReadOnlyList<SessionInfo> LoadFromLines(
+            IReadOnlyList<string> lines, string sourceName)
+        {
+            ArgumentNullException.ThrowIfNull(lines);
+
+            var headerIndex = -1;
+            IReadOnlyDictionary<string, int>? map = null;
+            for (var i = 0; i < lines.Count && map is null; i++)
+            {
+                if (TryBuildColumnMap(lines[i], out var candidate))
+                {
+                    map = candidate;
+                    headerIndex = i;
+                }
+            }
+
+            if (map is null)
                 throw new InvalidDataException(
-                    $"No catalog header row found in {_markdownPath}. Expected a row whose " +
-                    $"cells are: {string.Join(" | ", ExpectedHeader)}.");
+                    $"No usable catalog header row found in {sourceName}. Expected a row " +
+                    $"carrying all of: {string.Join(", ", RequiredColumns)}.");
+
+            // A name that is absent from a row is an empty cell, never an
+            // IndexOutOfRange. A file caught mid-write must cost one field, not
+            // the whole load.
+            string Cell(string[] cells, string column)
+                => map.TryGetValue(column, out var at) && at < cells.Length ? cells[at] : string.Empty;
 
             var sessions = new List<SessionInfo>();
-            var skipped = 0;
 
-            for (var i = headerIndex + 2; i < lines.Length; i++)   // +2 skips the |---|---| rule
+            for (var i = headerIndex + 2; i < lines.Count; i++)   // +2 skips the |---|---| rule
             {
                 var line = lines[i];
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 if (!line.TrimStart().StartsWith('|')) break;       // table ended
 
                 var cells = SplitRow(line);
-                if (cells.Length < 7)
-                {
-                    skipped++;
-                    continue;
-                }
+                if (cells.Length <= IdColumn) continue;
 
-                var id = Clean(cells[6]);
-                if (id.Length == 0) { skipped++; continue; }
+                var id = Clean(Cell(cells, "session id"));
+                if (id.Length == 0) continue;
 
+                var directory = Cell(cells, "directory");
                 sessions.Add(new SessionInfo(
                     Id: id,
-                    Title: Clean(cells[5]),
-                    Directory: Clean(cells[4]),
-                    Agent: Clean(cells[3]),
-                    Updated: ParseTimestamp(cells[1]),
-                    Messages: ParseMessages(cells[2]),
-                    ProjectPath: ToNativePath(Clean(cells[4])),
-                    RawDirectory: cells[4].Trim()));
+                    Title: Clean(Cell(cells, "title")),
+                    Directory: Clean(directory),
+                    Agent: Clean(Cell(cells, "agent")),
+                    Updated: ParseTimestamp(Cell(cells, "updated")),
+                    Messages: ParseMessages(Cell(cells, "msgs")),
+                    ProjectPath: ToNativePath(Clean(directory)),
+                    RawDirectory: directory.Trim())
+                {
+                    Created = ParseTimestamp(Cell(cells, "created")),
+                });
             }
 
             if (sessions.Count == 0)
                 throw new InvalidDataException(
-                    $"Catalog {_markdownPath} has a valid header but no usable rows " +
-                    $"({skipped} row(s) skipped).");
+                    $"Catalog {sourceName} has a valid header but no usable rows.");
 
             return sessions;
         }
 
-        /// <summary>True when this line is the table header.</summary>
-        private static bool IsHeaderRow(string line)
+        /// <summary>
+        /// Try to read this line as the table header, returning a name-to-index map.
+        /// </summary>
+        /// <remarks>
+        /// Succeeds for any header carrying every required column, in any order.
+        /// That tolerance is the point; a strict positional header test would have
+        /// rejected the very file this change was made to produce.
+        /// </remarks>
+        private static bool TryBuildColumnMap(string line, out IReadOnlyDictionary<string, int> map)
         {
-            var trimmed = line.TrimStart();
-            if (!trimmed.StartsWith('|')) return false;
+            map = null!;
+            if (string.IsNullOrWhiteSpace(line) || !line.TrimStart().StartsWith('|')) return false;
 
             var cells = SplitRow(line).Select(Clean).Select(s => s.ToLowerInvariant()).ToArray();
-            if (cells.Length < ExpectedHeader.Length) return false;
 
-            for (var i = 0; i < ExpectedHeader.Length; i++)
-                if (cells[i] != ExpectedHeader[i]) return false;
+            var candidate = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var i = 0; i < cells.Length; i++)
+                // First writer wins, so a duplicated column name cannot make a
+                // later copy shadow the real one.
+                if (cells[i].Length > 0 && !candidate.ContainsKey(cells[i]))
+                    candidate[cells[i]] = i;
 
+            foreach (var required in RequiredColumns)
+                if (!candidate.ContainsKey(required)) return false;
+
+            map = candidate;
             return true;
         }
 
@@ -225,6 +299,136 @@ namespace SessionLauncher.App.Services
             if (value.Length == 2 && value[1] == ':') value += '\\';
 
             return value;
+        }
+
+        /// <summary>Number of assertions checked. Throws on the first failure.</summary>
+        public static int RunSelfTest()
+        {
+            var n = 0;
+            void Check(bool ok, string what)
+            {
+                n++;
+                if (!ok) throw new InvalidOperationException("SessionCatalog self-test failed: " + what);
+            }
+            void CheckEqual<T>(T expected, T actual, string what)
+            {
+                n++;
+                if (!EqualityComparer<T>.Default.Equals(expected, actual))
+                    throw new InvalidOperationException(
+                        $"SessionCatalog self-test failed: {what} (expected '{expected}', got '{actual}')");
+            }
+            void Throws(Action action, string what)
+            {
+                n++;
+                try { action(); }
+                catch (InvalidDataException) { return; }
+                throw new InvalidOperationException(
+                    $"SessionCatalog self-test failed: {what} (nothing was thrown)");
+            }
+
+            // Timestamps parse with DateTimeStyles.AssumeLocal, so the offset
+            // depends on this machine's zone. Comparing components rather than
+            // whole values keeps the assertions true wherever they run.
+            void At(DateTimeOffset value, int y, int mo, int d, int h, int mi, string what)
+            {
+                Check(value.Year == y && value.Month == mo && value.Day == d
+                      && value.Hour == h && value.Minute == mi,
+                      $"{what} (got {value:yyyy-MM-dd HH:mm})");
+            }
+
+            var seven = new[]
+            {
+                "# TOP-LEVEL-SESSIONS", "",
+                "| # | updated | msgs | agent | directory | title | session id |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+                "| 1 | 2026-10-01 17:39 | 1031 | build | `F:/a/b` | title one \\| with pipe | `ses_one` |",
+                "| 2 | 2026-01-01 09:00 | 7 | plan | `C:/x` |  | `ses_two` |",
+            };
+
+            var eight = new[]
+            {
+                "# TOP-LEVEL-SESSIONS", "",
+                "| # | created | updated | msgs | agent | directory | title | session id |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| 1 | 2026-08-19 11:03 | 2026-10-01 17:39 | 1031 | build | `F:/a/b` | title one \\| with pipe | `ses_one` |",
+                "| 2 | 2026-07-02 08:00 | 2026-01-01 09:00 | 7 | plan | `C:/x` |  | `ses_two` |",
+            };
+
+            // ---- the OLD seven-column layout still works ----
+            //
+            // This is the case that matters: the catalog is a shared file that the
+            // generator rewrites, so the reader must survive every catalog the user
+            // has not regenerated yet.
+            var s7 = SessionCatalog.LoadFromLines(seven, "seven");
+            CheckEqual(2, s7.Count, "the 7-column layout yields both rows");
+            CheckEqual("title one | with pipe", s7[0].Title,
+                "an escaped pipe inside a title resolves to a literal one");
+            At(s7[0].Updated, 2026, 10, 1, 17, 39, "the 7-column updated cell parses");
+            CheckEqual(DateTimeOffset.MinValue, s7[0].Created,
+                "a layout with no created column yields MinValue, not a guess");
+            CheckEqual(@"F:\a\b", s7[0].ProjectPath,
+                "a forward-slash directory becomes a native path");
+            CheckEqual("ses_two", s7[1].Id, "the second row's id is read");
+
+            // ---- the NEW eight-column layout ----
+            var s8 = SessionCatalog.LoadFromLines(eight, "eight");
+            CheckEqual(2, s8.Count, "the 8-column layout yields both rows");
+            CheckEqual("title one | with pipe", s8[0].Title,
+                "the escaped pipe survives the extra column too");
+            At(s8[0].Created, 2026, 8, 19, 11, 3, "the created cell parses");
+            At(s8[1].Created, 2026, 7, 2, 8, 0, "each row gets its own created value");
+            At(s8[0].Updated, 2026, 10, 1, 17, 39, "created did not displace updated");
+            CheckEqual(1031, s8[0].Messages, "the message count still lands in the right cell");
+            CheckEqual("build", s8[0].Agent, "the agent still lands in the right cell");
+            CheckEqual(@"F:\a\b", s8[0].ProjectPath, "the native path is unaffected by the new column");
+
+            // ---- order-independence, which is the whole point of name mapping ----
+            var reversed = new[]
+            {
+                "| # | updated | msgs | agent | title | directory | session id |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+                "| 1 | 2026-10-01 17:39 | 5 | build | the title | `F:/a/b` | `ses_rev` |",
+            };
+            var rev = SessionCatalog.LoadFromLines(reversed, "reversed");
+            CheckEqual("the title", rev[0].Title, "a reordered header does not swap title for directory");
+            CheckEqual(@"F:\a\b", rev[0].ProjectPath, "a reordered header does not swap directory for title");
+
+            // ---- rejections ----
+            Throws(() => SessionCatalog.LoadFromLines(
+                    new[] { "# x", "", "| foo | bar |", "| --- | --- |", "| 1 | 2 |" }, "junk"),
+                "a table whose header is neither layout is rejected");
+            Throws(() => SessionCatalog.LoadFromLines(
+                    new[] { "| # | updated | msgs | agent | directory | session id |" }, "no-title"),
+                "a header missing the title column is rejected");
+            Throws(() => SessionCatalog.LoadFromLines(new[] { "# nothing here" }, "empty"),
+                "a file with no table at all is rejected");
+
+            // ---- an unusable created cell is "no value", not a crash ----
+            var blank = new[]
+            {
+                "| # | created | updated | msgs | agent | directory | title | session id |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| 1 |  | 2026-10-01 17:39 | 1 | build | `F:/a` | t | `ses_blank` |",
+                "| 2 | not-a-date | 2026-10-01 17:39 | 1 | build | `F:/b` | t | `ses_junk` |",
+            };
+            var b = SessionCatalog.LoadFromLines(blank, "blank");
+            CheckEqual(2, b.Count, "an empty or unparseable created cell does not drop the row");
+            CheckEqual(DateTimeOffset.MinValue, b[0].Created, "an empty created cell is MinValue");
+            CheckEqual(DateTimeOffset.MinValue, b[1].Created, "an unparseable created cell is MinValue");
+
+            // ---- a truncated row keeps whatever it has ----
+            var shortRow = new[]
+            {
+                "| # | created | updated | msgs | agent | directory | title | session id |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| 1 | 2026-08-19 11:03 | 2026-10-01 17:39 | 1031 | build |",
+                "| 2 | 2026-07-02 08:00 | 2026-01-01 09:00 | 7 | plan | `C:/x` |  | `ses_two` |",
+            };
+            var sr = SessionCatalog.LoadFromLines(shortRow, "short");
+            CheckEqual(1, sr.Count, "a row that lost its cells is skipped, and the rest still load");
+            CheckEqual("ses_two", sr[0].Id, "the intact row is the one that survives");
+
+            return n;
         }
     }
 }
