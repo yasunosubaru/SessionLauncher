@@ -208,23 +208,200 @@ public static class OpenChamberBridge
     }
 
     /// <summary>
-    /// Ensure a project record exists and make it the active one.
+    /// True when OpenChamber already lists this project.
+    /// </summary>
+    /// <param name="projectPath">The project's directory, in any separator style.</param>
+    /// <param name="known">
+    /// Projects to search instead of reading settings.json. Supplying this keeps a
+    /// caller that already has the list from re-reading the file, and lets the
+    /// self-test exercise the comparison without touching the live document.
+    /// </param>
+    /// <remarks>
+    /// The comparison goes through <see cref="ProjectCatalog.Normalize"/> on both
+    /// sides, and that is not tidiness. OpenChamber stores paths with forward
+    /// slashes; the catalog carries "F:/x/y" and "F:\x\y" for the same folder. A raw
+    /// string compare misses almost every project, which is exactly what happened to
+    /// the colour lookup that shares this normalisation.
+    /// </remarks>
+    public static bool IsRegistered(string projectPath, IReadOnlyList<OpenChamberProject>? known = null)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath)) return false;
+
+        var wanted = ProjectCatalog.Normalize(projectPath);
+        if (wanted.Length == 0) return false;
+
+        var projects = known ?? ReadProjects();
+        return projects.Any(p => ProjectCatalog.Normalize(p.Path).Equals(
+            wanted, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// How many keys the document's root object carries; 0 when it will not parse.
     /// </summary>
     /// <remarks>
-    /// Returns the id that was activated. The record is created if absent, with the
-    /// leaf folder name as the label, because a project with no label renders as a bare
-    /// path in the sidebar.
-    /// <para>
-    /// <b>This rewrites a live app's settings file, and nothing in the UI calls it
-    /// any more.</b> It is kept because the id scheme it implements is load-bearing for
-    /// the colour lookup, and because the tests pin that scheme. The write itself is
-    /// atomic (temp file plus replace) so OpenChamber never sees a truncated document,
-    /// but it is a read-modify-write against a file a running Electron process owns,
-    /// with no locking — so a concurrent OpenChamber save can be clobbered. Opening a
-    /// project is now done with the session deep link instead; see
-    /// <c>LauncherService.OpenSessionSetInOpenChamber</c>, which writes nothing.
+    /// Taken before a write and compared after, this is the cheapest available
+    /// evidence that an edit did not replace the document. OpenChamber's settings
+    /// hold 58 top-level keys on this machine, and losing any of them is a silent,
+    /// permanent change to someone else's configuration.
     /// </remarks>
-    public static string Activate(string projectPath, string? label = null)
+    public static int CountTopLevelKeys(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return 0;
+
+        try
+        {
+            return JsonNode.Parse(json) is JsonObject obj ? obj.Count : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>How many backups are kept before the oldest is pruned.</summary>
+    public const int BackupKeepCount = 10;
+
+    /// <summary>The directory backups are written to by default.</summary>
+    public static string DefaultBackupRoot =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SessionLauncher", "backups");
+
+    /// <summary>
+    /// Copy the settings file aside, then prune the backup directory.
+    /// </summary>
+    /// <param name="settingsPath">The file to copy.</param>
+    /// <param name="backupRoot">
+    /// Destination directory, created if absent. Defaults to
+    /// <see cref="DefaultBackupRoot"/>; the self-test passes a scratch directory so
+    /// it never fills the real one.
+    /// </param>
+    /// <returns>The backup's full path.</returns>
+    /// <exception cref="FileNotFoundException">
+    /// <paramref name="settingsPath"/> does not exist. Copying a missing file would
+    /// produce a backup of nothing, which is worse than no backup at all.
+    /// </exception>
+    /// <remarks>
+    /// Called BEFORE every write, not after. The point of a backup is to exist before
+    /// the thing it protects against happens.
+    /// </remarks>
+    public static string BackupSettings(string settingsPath, string? backupRoot = null)
+    {
+        if (!File.Exists(settingsPath))
+            throw new FileNotFoundException(
+                "OpenChamber settings.json was not found; cannot back it up.", settingsPath);
+
+        var root = backupRoot ?? DefaultBackupRoot;
+        Directory.CreateDirectory(root);
+
+        var stamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
+        var target = Path.Combine(root, $"settings-{stamp}.json");
+
+        File.Copy(settingsPath, target, overwrite: true);
+
+        // Newest first, by name. The stamp format sorts lexicographically, so this
+        // needs no file timestamps and cannot reorder on a clock change.
+        foreach (var old in Directory
+                     .GetFiles(root, "settings-*.json")
+                     .OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase)
+                     .Skip(BackupKeepCount))
+        {
+            // A backup someone has open is left alone; losing one is not fatal.
+            try { File.Delete(old); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        return target;
+    }
+
+    /// <summary>
+    /// Prove that a write landed: the project is listed, it is the active one, the
+    /// document parses, and nothing was dropped.
+    /// </summary>
+    /// <param name="settingsPath">The settings file just written.</param>
+    /// <param name="projectId">The id <see cref="Activate"/> said it activated.</param>
+    /// <param name="minimumKeyCount">
+    /// The key count observed BEFORE the write. A smaller count afterwards means the
+    /// write lost configuration.
+    /// </param>
+    /// <exception cref="InvalidDataException">
+    /// Any of the four conditions fails. Every failure is reported at once rather
+    /// than one per call, because the commonest cause — a write that produced an
+    /// entirely different document — fails all of them, and fixing one is pointless.
+    /// </exception>
+    public static void VerifyRegistered(string settingsPath, string projectId, int minimumKeyCount)
+    {
+        if (!File.Exists(settingsPath))
+            throw new FileNotFoundException(
+                "OpenChamber settings.json disappeared during the write.", settingsPath);
+
+        JsonObject root;
+        try
+        {
+            root = JsonNode.Parse(File.ReadAllText(settingsPath, Encoding.UTF8)) as JsonObject
+                   ?? throw new InvalidDataException(
+                       $"OpenChamber settings.json is not a JSON object after the write: {settingsPath}");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException(
+                $"OpenChamber settings.json does not parse after the write: {settingsPath}", ex);
+        }
+
+        var listed = root["projects"] is JsonArray array
+            ? array.OfType<JsonObject>()
+                     .Select(p => ReadString(p["id"]))
+                     .Where(id => id is not null)
+                     .ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string?>(StringComparer.Ordinal);
+
+        var problems = new List<string>();
+
+        if (!listed.Contains(projectId))
+            problems.Add($"project '{projectId}' is not in the projects array");
+
+        var active = ReadString(root["activeProjectId"]);
+        if (active != projectId)
+            problems.Add($"activeProjectId is '{active ?? "(absent)"}', expected '{projectId}'");
+
+        if (root.Count < minimumKeyCount)
+            problems.Add($"the document has {root.Count} top-level keys, expected at least {minimumKeyCount}");
+
+        if (problems.Count > 0)
+            throw new InvalidDataException(
+                "OpenChamber settings.json was not left as intended: " + string.Join("; ", problems));
+    }
+
+    /// <summary>
+    /// Ensure a project record exists and make it the active one.
+    /// </summary>
+    /// <param name="projectPath">The project's directory.</param>
+    /// <param name="label">Display name; the leaf folder name when null.</param>
+    /// <param name="colorKey">
+    /// One of OpenChamber's palette keys. Applied on create and on update, so a
+    /// project this launcher registers arrives with the same accent it shows here.
+    /// </param>
+    /// <param name="settingsPath">
+    /// Which settings file to edit. Defaults to <see cref="ResolveSettingsPath"/>;
+    /// the self-test points this at a scratch file so it never edits the live one.
+    /// </param>
+    /// <returns>The id that was activated.</returns>
+    /// <remarks>
+    /// The record is created if absent, with the leaf folder name as the label,
+    /// because a project with no label renders as a bare path in the sidebar.
+    /// <para>
+    /// <b>This rewrites a live app's settings file.</b> The write is atomic (temp file
+    /// plus replace) so OpenChamber never sees a truncated document, but it is a
+    /// read-modify-write against a file a running Electron process owns, with no
+    /// locking — so a concurrent OpenChamber save can be clobbered, and an OpenChamber
+    /// save afterwards will overwrite this. It is therefore only safe when
+    /// OpenChamber is NOT running; establishing that is the caller's job, and
+    /// <see cref="VerifyRegistered"/> is what proves the result afterwards.
+    /// </para>
+    /// </remarks>
+    public static string Activate(
+        string projectPath, string? label = null, string? colorKey = null, string? settingsPath = null)
     {
         if (string.IsNullOrWhiteSpace(projectPath))
             throw new ArgumentException("a project path is required", nameof(projectPath));
@@ -232,14 +409,15 @@ public static class OpenChamberBridge
         if (!Directory.Exists(projectPath))
             throw new DirectoryNotFoundException($"Project path not found: {projectPath}");
 
-        var settingsPath = ResolveSettingsPath()
+        var settings = settingsPath
+            ?? ResolveSettingsPath()
             ?? throw new FileNotFoundException(
                 "OpenChamber settings.json was not found; is OpenChamber installed?");
 
         var id = MakeId(projectPath);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var json = File.ReadAllText(settingsPath, Encoding.UTF8);
+        var json = File.ReadAllText(settings, Encoding.UTF8);
         var root = JsonNode.Parse(json) as JsonObject
             ?? throw new InvalidDataException("OpenChamber settings.json is not a JSON object");
 
@@ -255,7 +433,7 @@ public static class OpenChamberBridge
 
         if (existing is null)
         {
-            projects.Add(new JsonObject
+            var created = new JsonObject
             {
                 ["id"] = id,
                 ["path"] = projectPath,
@@ -263,11 +441,18 @@ public static class OpenChamberBridge
                 ["addedAt"] = now,
                 ["lastOpenedAt"] = now,
                 ["sidebarCollapsed"] = false,
-            });
+            };
+
+            // Omitted entirely rather than written empty: OpenChamber treats a
+            // missing colour as "pick one", and an empty string is not a palette key.
+            if (!string.IsNullOrWhiteSpace(colorKey)) created["color"] = colorKey;
+
+            projects.Add(created);
         }
         else
         {
             if (!string.IsNullOrWhiteSpace(label)) existing["label"] = label;
+            if (!string.IsNullOrWhiteSpace(colorKey)) existing["color"] = colorKey;
             existing["lastOpenedAt"] = now;
             // A project you just asked to open should not stay folded in the sidebar.
             existing["sidebarCollapsed"] = false;
@@ -284,7 +469,7 @@ public static class OpenChamberBridge
         // be a no-op dressed up as a feature.
         root["sidebarProjectDisplayMode"] = "all";
 
-        WriteSettings(settingsPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        WriteSettings(settings, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         return id;
     }
 
@@ -504,6 +689,181 @@ public static class OpenChamberBridge
         var reparsed = ReadProjectsFrom(activateShaped.ToJsonString());
         CheckEqual(3, reparsed.Count, "an appended project is seen on the next read");
         Check(reparsed.Any(p => p.Id == MakeId("F:\\a")), "the appended project is the one activated");
+
+        // ---- registration: IsRegistered, key counts, backup, verification ----
+        //
+        // Everything below writes into a scratch directory. The real settings.json
+        // belongs to a live Electron process, and a self-test that touched it would
+        // be the exact failure this whole feature exists to avoid.
+
+        static string Scratch(string tag)
+        {
+            var dir = Path.Combine(Path.GetTempPath(),
+                "sl-bridge-" + tag + "-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        static void Clear(string dir)
+        {
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
+            catch (IOException) { /* a locked scratch file must not fail the suite */ }
+        }
+
+        // Catches the two exceptions these helpers throw for "the file is not what
+        // you need it to be": a malformed document, and a missing one. Deliberately
+        // not reusing the ArgumentException-only Throws below.
+        static bool ThrowsDataProblem(Action action)
+        {
+            try { action(); return false; }
+            catch (InvalidDataException) { return true; }
+            catch (FileNotFoundException) { return true; }
+        }
+
+        // IsRegistered is tested only through an explicit `known` list, so it never
+        // reads the live settings file. Separator style is the case that matters:
+        // OpenChamber writes forward slashes and the catalog carries both, and a
+        // raw string compare misses almost every project — which is what already
+        // happened once to the colour lookup.
+        var known = ReadProjectsFrom(doc);
+        Check(IsRegistered("F:/a", known), "a forward-slash path matches a backslash record");
+        Check(IsRegistered("F:\\a", known), "and the reverse");
+        Check(IsRegistered("F:\\A\\", known), "trailing separator and case do not matter");
+        Check(!IsRegistered("F:/a/other", known), "a different folder is not registered");
+        Check(!IsRegistered("", known), "an empty path is not registered");
+        Check(!IsRegistered("   ", known), "a whitespace path is not registered");
+
+        // Key counting, which is how a write proves it dropped nothing.
+        CheckEqual(2, CountTopLevelKeys("""{"a":1,"b":2}"""), "two keys count as two");
+        CheckEqual(1, CountTopLevelKeys("""{"a":1}"""), "one key counts as one");
+        CheckEqual(0, CountTopLevelKeys("{ not json"), "unparseable json counts as zero");
+        CheckEqual(0, CountTopLevelKeys(""), "empty input counts as zero");
+        CheckEqual(0, CountTopLevelKeys("[]"), "an array root has no top-level keys");
+        CheckEqual(3, CountTopLevelKeys(doc), "the fixture document's own key count");
+
+        // Backup, on a scratch root.
+        var bdir = Scratch("backup");
+        try
+        {
+            var source = Path.Combine(bdir, "settings.json");
+            File.WriteAllText(source, doc, new UTF8Encoding(false));
+
+            var backup = BackupSettings(source, bdir);
+            Check(File.Exists(backup), "BackupSettings writes a file that exists");
+            CheckEqual(CountTopLevelKeys(doc),
+                       CountTopLevelKeys(File.ReadAllText(backup, Encoding.UTF8)),
+                       "the backup holds the same document");
+            Check(backup.StartsWith(bdir, StringComparison.OrdinalIgnoreCase),
+                  "the backup lands in the directory it was told to use");
+
+            // Twelve more writes, then one that must prune: the directory keeps at
+            // most ten, so the point of a backup directory is not defeated by itself.
+            for (var i = 0; i < 12; i++) BackupSettings(source, bdir);
+            var kept = Directory.GetFiles(bdir, "settings-*.json");
+            Check(kept.Length <= 10, $"the backup directory prunes to ten, holds {kept.Length}");
+
+            Check(ThrowsDataProblem(() => BackupSettings(Path.Combine(bdir, "nope.json"), bdir)),
+                  "backing up a file that does not exist is rejected");
+        }
+        finally { Clear(bdir); }
+
+        // Activate writes the colour it was handed, so a project registered by the
+        // launcher does not arrive in OpenChamber with no accent.
+        var cdir = Scratch("color");
+        try
+        {
+            var settings = Path.Combine(cdir, "settings.json");
+            File.WriteAllText(settings, doc, new UTF8Encoding(false));
+
+            // Activate refuses a directory that does not exist, which is deliberate:
+            // registering a project the user cannot open helps nobody. So the fixture
+            // uses a real scratch folder rather than a made-up path.
+            var fresh = Path.Combine(cdir, "fresh");
+            Directory.CreateDirectory(fresh);
+
+            var id = Activate(fresh, "fresh", "error", settings);
+            var after = ReadProjectsFrom(File.ReadAllText(settings, Encoding.UTF8));
+            Check(after.Any(p => p.Id == id && p.Color == "error"),
+                  "Activate records the colour it was given");
+            CheckEqual(3, after.Count, "Activate added exactly one project");
+            CheckEqual("fresh", after.Single(p => p.Id == id).Label,
+                       "and gave it the label it was given");
+
+            // An existing record updates its colour rather than duplicating itself.
+            var again = Activate(fresh, "fresh", "primary", settings);
+            CheckEqual(id, again, "re-activating resolves to the same id");
+            CheckEqual(3, ReadProjectsFrom(File.ReadAllText(settings, Encoding.UTF8)).Count,
+                       "re-activating does not add a duplicate");
+            CheckEqual("primary",
+                       ReadProjectsFrom(File.ReadAllText(settings, Encoding.UTF8))
+                                  .Single(p => p.Id == id).Color,
+                       "and updates the colour in place");
+        }
+        finally { Clear(cdir); }
+
+        // VerifyRegistered is the gate the whole write path depends on, so each way
+        // it can fail is asserted separately rather than through one catch.
+        var vdir = Scratch("verify");
+        try
+        {
+            var settings = Path.Combine(vdir, "settings.json");
+            File.WriteAllText(settings, doc, new UTF8Encoding(false));
+            var before = CountTopLevelKeys(File.ReadAllText(settings, Encoding.UTF8));
+
+            var target = Path.Combine(vdir, "fresh");
+            Directory.CreateDirectory(target);
+
+            Check(ThrowsDataProblem(() => VerifyRegistered(settings, MakeId(target), before)),
+                  "an id that is not registered fails verification");
+            Check(ThrowsDataProblem(() => VerifyRegistered(settings, "not-even-an-id", before)),
+                  "a malformed id fails verification");
+
+            var real = Activate(target, "fresh", "error", settings);
+            var afterCount = CountTopLevelKeys(File.ReadAllText(settings, Encoding.UTF8));
+            Check(ThrowsDataProblem(() => VerifyRegistered(settings, real, afterCount + 1)),
+                  "a document with fewer keys than the caller required is rejected");
+            Check(!ThrowsDataProblem(() => VerifyRegistered(settings, real, before)),
+                  "the pre-write key count is still accepted afterwards");
+
+            Check(ThrowsDataProblem(() => VerifyRegistered(
+                      Path.Combine(vdir, "gone.json"), real, before)),
+                  "a settings file that vanished fails verification rather than passing");
+        }
+        finally { Clear(vdir); }
+
+        // Last, because it is the one that must not throw: a real Activate followed
+        // by a real verification on a real file.
+        var edir = Scratch("endtoend");
+        try
+        {
+            var settings = Path.Combine(edir, "settings.json");
+            File.WriteAllText(settings, doc, new UTF8Encoding(false));
+            var before = CountTopLevelKeys(File.ReadAllText(settings, Encoding.UTF8));
+
+            var fresh = Path.Combine(edir, "fresh");
+            Directory.CreateDirectory(fresh);
+            var id = Activate(fresh, "fresh", "error", settings);
+
+            // Adding a project to the array must not LOSE a top-level key. It may gain
+            // one: Activate sets sidebarProjectDisplayMode, which this fixture does
+            // not carry, so the count legitimately rises by exactly that. A write
+            // that replaced the document instead of editing it would show a count
+            // far below `before`, which is what the floor is here to catch.
+            var finalCount = CountTopLevelKeys(File.ReadAllText(settings, Encoding.UTF8));
+            Check(finalCount >= before,
+                  $"the write did not drop top-level keys ({before} -> {finalCount})");
+
+            Check(!ThrowsDataProblem(() => VerifyRegistered(settings, id, before)),
+                  "VerifyRegistered accepts a write Activate actually made");
+
+            var root = JsonNode.Parse(File.ReadAllText(settings, Encoding.UTF8))!.AsObject();
+            CheckEqual(id, root["activeProjectId"]!.GetValue<string>(),
+                       "and activeProjectId names the project just activated");
+            Check(root["projects"]!.AsArray().Any(
+                      p => p!["id"]!.GetValue<string>() == id),
+                  "and the project is in the array");
+        }
+        finally { Clear(edir); }
 
         return n;
 
