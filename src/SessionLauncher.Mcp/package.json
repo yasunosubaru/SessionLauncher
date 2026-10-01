@@ -13,6 +13,7 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "refresh": "node refresh_catalog.mjs"
+    "refresh": "node refresh_catalog.mjs",
+    "test": "node ../../tools/test-catalog.mjs"
   }
 }

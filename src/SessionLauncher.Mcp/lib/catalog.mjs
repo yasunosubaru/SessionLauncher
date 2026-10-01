@@ -79,9 +79,16 @@ export function resolveCatalogPath() {
  * Always the canonical path when its directory exists, so the GUI and this server
  * keep converging on one file. Falls back to the project data directory on a
  * machine without that volume.
+ *
+ * SESSIONLAUNCHER_CATALOG overrides everything. It exists for the test suite:
+ * without it a call to generate() rewrites the live catalog that the GUI and this
+ * server both read, so a failing test would destroy the very file it is asserting
+ * about. Nothing sets it in normal operation.
  * @returns {string}
  */
 export function resolveCatalogWritePath() {
+  const override = process.env.SESSIONLAUNCHER_CATALOG;
+  if (override) return override;
   if (existsSync(dirname(CANONICAL_CATALOG_PATH))) return CANONICAL_CATALOG_PATH;
   return join(projectRoot, 'data', CATALOG_FILENAME);
 }

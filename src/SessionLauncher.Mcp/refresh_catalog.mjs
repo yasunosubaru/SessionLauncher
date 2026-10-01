@@ -14,8 +14,9 @@
 // children rows are excluded.
 //
 // Outputs (written next to each other at the resolved catalog path):
-//   TOP-LEVEL-SESSIONS.md  exact same header/row format as the existing file
-//   sessions.json          [{id,title,directory,agent,updated,msgs}]
+//   TOP-LEVEL-SESSIONS.md  8 columns: # | created | updated | msgs | agent |
+//                          directory | title | session id
+//   sessions.json          [{id,title,directory,agent,created,updated,msgs}]
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -27,9 +28,9 @@ import { escapeCell, resolveCatalogWritePath } from './lib/catalog.mjs';
 const DEFAULT_DB_PATH = 'C:\\Users\\demo\\.local\\share\\opencode\\opencode.db';
 
 const TABLE_HEADER =
-  '| # | updated | msgs | agent | directory | title | session id |';
+  '| # | created | updated | msgs | agent | directory | title | session id |';
 const TABLE_SEPARATOR =
-  '| --- | --- | --- | --- | --- | --- | --- |';
+  '| --- | --- | --- | --- | --- | --- | --- | --- |';
 const TITLE_LINE = '# TOP-LEVEL-SESSIONS';
 
 /**
@@ -50,7 +51,7 @@ function formatLocal(epochMs) {
 /**
  * Query the database for top-level sessions and their message counts.
  * @param {string} dbPath
- * @returns {{id:string,title:string,directory:string,agent:string,time_updated:number,msgs:number}[]}
+ * @returns {{id:string,title:string,directory:string,agent:string,time_created:number,time_updated:number,msgs:number}[]}
  */
 function readSessions(dbPath) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -61,6 +62,7 @@ function readSessions(dbPath) {
                 s.title,
                 s.directory,
                 s.agent,
+                s.time_created,
                 s.time_updated,
                 (SELECT COUNT(*) FROM session_message m WHERE m.session_id = s.id) AS msgs
            FROM session_v2 s
@@ -75,10 +77,14 @@ function readSessions(dbPath) {
 
 /**
  * Regenerate the catalog. Returns a summary of what was written.
+ *
+ * `options.dbPath` overrides the database. The test suite needs it, because the
+ * default is the user's real opencode.db and a test must never read or write it.
+ * @param {{dbPath?: string}} [options]
  * @returns {{count:number, markdownPath:string, jsonPath:string}}
  */
-export function generate() {
-  const dbPath = process.env.SESSIONLAUNCHER_DB || DEFAULT_DB_PATH;
+export function generate(options = {}) {
+  const dbPath = options.dbPath || process.env.SESSIONLAUNCHER_DB || DEFAULT_DB_PATH;
 
   let rows;
   try {
@@ -96,10 +102,11 @@ export function generate() {
   const wrap = (v) => '`' + escapeCell(v) + '`';
 
   rows.forEach((row, index) => {
+    const created = formatLocal(row.time_created);
     const updated = formatLocal(row.time_updated);
     const msgs = row.msgs ?? 0;
     lines.push(
-      `| ${index + 1} | ${updated} | ${msgs} | ${escapeCell(row.agent)} | ` +
+      `| ${index + 1} | ${created} | ${updated} | ${msgs} | ${escapeCell(row.agent)} | ` +
         `${wrap(row.directory)} | ${escapeCell(row.title)} | ${wrap(row.id)} |`,
     );
     sidecar.push({
@@ -107,6 +114,7 @@ export function generate() {
       title: row.title,
       directory: row.directory,
       agent: row.agent,
+      created: row.time_created,
       updated: row.time_updated,
       msgs,
     });
