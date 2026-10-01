@@ -677,7 +677,7 @@
                         <!-- ColumnHeaderContainerStyle, not ColumnHeaderStyle: the latter
                              does not exist on GridView (MC3072). -->
                         <GridView ColumnHeaderContainerStyle="{StaticResource ProjectColumnHeader}">
-                            <GridViewColumn Header="{markup:Tr proj.colName}" Width="330">
+                            <GridViewColumn x:Name="PColName" Header="{markup:Tr proj.colName}" Width="330">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <!-- The folder icon carries the project's colour,
@@ -702,13 +702,13 @@
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>
-                            <GridViewColumn Header="{markup:Tr proj.colSessions}" Width="92"
+                            <GridViewColumn x:Name="PColSessions" Header="{markup:Tr proj.colSessions}" Width="92"
                                             DisplayMemberBinding="{Binding SessionCount}" />
-                            <GridViewColumn Header="{markup:Tr proj.colLast}" Width="150"
+                            <GridViewColumn x:Name="PColLast" Header="{markup:Tr proj.colLast}" Width="150"
                                             DisplayMemberBinding="{Binding LastSeenText}" />
-                            <GridViewColumn Header="{markup:Tr proj.colColor}" Width="86"
-                                            DisplayMemberBinding="{Binding ColorLabel}" />
-                            <GridViewColumn Header="{markup:Tr proj.colPath}" Width="560">
+                            <GridViewColumn x:Name="PColCreated" Header="{markup:Tr proj.colCreated}" Width="150"
+                                            DisplayMemberBinding="{Binding CreatedText}" />
+                            <GridViewColumn x:Name="PColPath" Header="{markup:Tr proj.colPath}" Width="560">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding Path}" Margin="9,0,9,0"
@@ -766,8 +766,8 @@
                                         Width="380" DisplayMemberBinding="{Binding DisplayTitle}" />
                         <GridViewColumn x:Name="ColFolder" Header="{markup:Tr col.folder}"
                                         Width="220" DisplayMemberBinding="{Binding DirectoryLeaf}" />
-                        <GridViewColumn x:Name="ColId" Header="{markup:Tr col.id}"
-                                        Width="290" DisplayMemberBinding="{Binding Id}" />
+                        <GridViewColumn x:Name="ColCreated" Header="{markup:Tr col.created}"
+                                        Width="132" DisplayMemberBinding="{Binding CreatedText}" />
                     </GridView>
                 </ListView.View>
             </ListView>

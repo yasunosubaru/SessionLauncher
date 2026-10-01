@@ -35,10 +35,10 @@ namespace SessionLauncher.App.Services
 
         public const string Pick = "col.pick";
         public const string ColUpdated = "col.updated";
+        public const string ColCreated = "col.created";
         public const string ColMsgs = "col.msgs";
         public const string ColTitle = "col.title";
         public const string ColFolder = "col.folder";
-        public const string ColId = "col.id";
 
         public const string NothingSelected = "sel.none";
         public const string SelectedOne = "sel.one";
@@ -131,7 +131,7 @@ namespace SessionLauncher.App.Services
         public const string OcOpenedSet = "oc.openedSet";
         public const string OcSelection = "oc.selection";
         public const string ProjColSessions = "proj.colSessions";
-        public const string ProjColColor = "proj.colColor";
+        public const string ProjColCreated = "proj.colCreated";
 
         public const string StatusOpenedOne = "st.openedOne";
         public const string StatusOpenedMany = "st.openedMany";
@@ -175,7 +175,7 @@ namespace SessionLauncher.App.Services
                     [ColMsgs] = "消息数",
                     [ColTitle] = "标题",
                     [ColFolder] = "文件夹",
-                    [ColId] = "会话 ID",
+                    [ColCreated] = "创建时间",
 
                     [NothingSelected] = "未选择任何会话",
                     [SelectedOne] = "已选 1 条 — {0}",
@@ -276,7 +276,7 @@ namespace SessionLauncher.App.Services
                     [OcOpenedSet] = "已在 OpenChamber 中打开 {0} 的 {1} 条会话。",
                     [OcSelection] = "选中项",
                     [ProjColSessions] = "会话",
-                    [ProjColColor] = "颜色",
+                    [ProjColCreated] = "创建时间",
                     [StatusSelectAll] = "已选择全部 {0} 条会话（当前显示 {1} 条）。",
                     [StatusCleared] = "已取消选择。",
                     [StatusPickFirst] = "请先勾选至少一条会话。",
@@ -311,7 +311,7 @@ namespace SessionLauncher.App.Services
                     [ColMsgs] = "Msgs",
                     [ColTitle] = "Title",
                     [ColFolder] = "Folder",
-                    [ColId] = "Session id",
+                    [ColCreated] = "Created",
 
                     [NothingSelected] = "No conversation selected",
                     [SelectedOne] = "1 selected — {0}",
@@ -416,7 +416,7 @@ namespace SessionLauncher.App.Services
                     [OcOpenedSet] = "Opened {1} session(s) of {0} in OpenChamber.",
                     [OcSelection] = "the selection",
                     [ProjColSessions] = "Sessions",
-                    [ProjColColor] = "Colour",
+                    [ProjColCreated] = "Created",
                     [StatusSelectAll] = "Selected all {0} conversations ({1} currently shown).",
                     [StatusCleared] = "Selection cleared.",
                     [StatusPickFirst] = "Tick at least one conversation first.",

@@ -223,6 +223,12 @@ namespace SessionLauncher.App
         }
 
         /// <summary>Column widths at 100%, scaled by the current font scale.</summary>
+        /// <remarks>
+        /// The project columns are included because they used not to be, and at 140%
+        /// their fixed widths clipped the date columns — including the creation time
+        /// column this change added, which would have shipped already broken at the
+        /// font sizes the app offers.
+        /// </remarks>
         private void ApplyColumnWidths()
         {
             void Set(GridViewColumn column, double at100)
@@ -231,11 +237,16 @@ namespace SessionLauncher.App
             }
 
             Set(ColPick, 40);
-            Set(ColUpdated, 132);
+            Set(ColCreated, 132);
             Set(ColMsgs, 60);
             Set(ColTitle, 380);
             Set(ColFolder, 220);
-            Set(ColId, 290);
+
+            Set(PColName, 330);
+            Set(PColSessions, 92);
+            Set(PColCreated, 150);
+            Set(PColLast, 150);
+            Set(PColPath, 560);
         }
 
         private void OnFontBiggerClick(object sender, RoutedEventArgs e)
@@ -1192,6 +1203,15 @@ namespace SessionLauncher.App
             Session.Updated == DateTimeOffset.MinValue
                 ? "—"
                 : Session.Updated.ToString("yyyy-MM-dd HH:mm");
+
+        /// <summary>
+        /// Creation time, or an em dash when the catalog carries none — which is
+        /// every session in a catalog generated before the column existed.
+        /// </summary>
+        public string CreatedText =>
+            Session.Created == DateTimeOffset.MinValue
+                ? "—"
+                : Session.Created.ToString("yyyy-MM-dd HH:mm");
 
         /// <summary>True when the match was a subsequence hit rather than a literal one.</summary>
         public bool IsFuzzy { get; init; }

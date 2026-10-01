@@ -48,6 +48,18 @@ public sealed class ProjectRow : INotifyPropertyChanged
         ? "—"
         : Entry.LastUsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// When the project was created, or an em dash when the catalog carries no
+    /// creation times at all.
+    /// </summary>
+    /// <remarks>
+    /// Same format and same MinValue convention as <see cref="LastSeenText"/>, so
+    /// the two columns read as one pair rather than as two different conventions.
+    /// </remarks>
+    public string CreatedText => Entry.Created == DateTimeOffset.MinValue
+        ? "—"
+        : Entry.Created.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
     /// <summary>Session ids, newest first. This is the order the tabs get opened in.</summary>
     public IReadOnlyList<string> SessionIds => Entry.Sessions.Select(s => s.Id).ToList();
 

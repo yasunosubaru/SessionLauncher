@@ -77,6 +77,24 @@ public sealed class ProjectEntry
     /// <summary>Total messages across the project's sessions, a workload proxy.</summary>
     public int MessageCount => Sessions.Sum(s => s.Messages);
 
+    /// <summary>
+    /// When this project came into existence, i.e. the earliest creation time among
+    /// its sessions.
+    /// </summary>
+    /// <remarks>
+    /// A real <c>Min</c>, not <c>Sessions[^1].Created</c>. <see cref="Sessions"/> is
+    /// ordered by <see cref="LastUsed"/>, so its last element is the least recently
+    /// used session — which is not necessarily the oldest one. A conversation edited
+    /// today after being created last year would make the project's creation date
+    /// report as today.
+    /// <para>
+    /// Computed rather than stored: the session list is the only source, and it is
+    /// replaced wholesale every time the catalog reloads.
+    /// </para>
+    /// </remarks>
+    public DateTimeOffset Created =>
+        Sessions.Count > 0 ? Sessions.Min(s => s.Created) : DateTimeOffset.MinValue;
+
     /// <summary>Distinct agents that have worked in this project.</summary>
     public int AgentCount =>
         Sessions.Select(s => s.Agent).Where(a => !string.IsNullOrWhiteSpace(a)).Distinct().Count();
@@ -436,17 +454,39 @@ public static class ProjectCatalog
 
         // Sessions are ordered most recent first, because that is the order the tabs
         // get opened in.
+        //
+        // The Created values below run BACKWARDS against Updated on purpose. ses_new
+        // has the newest Updated but the EARLIEST Created, so a project that took
+        // Sessions[^1].Created (i.e. the oldest by Updated) would report a later date
+        // than one of its own sessions. Min() is what makes Created mean "when did
+        // this project start".
         var multi = ProjectCatalog.Group(new List<SessionInfo>
         {
-            new("ses_old", "old", "F:/x", "build", t0, 1, "F:\\x", "F:/x"),
-            new("ses_new", "new", "F:/x", "build", t0.AddDays(5), 1, "F:\\x", "F:/x"),
-            new("ses_mid", "mid", "F:/x/", "build", t0.AddDays(2), 1, "F:/x/", "F:/x/"),
+            new SessionInfo("ses_old", "old", "F:/x", "build", t0, 1, "F:\\x", "F:/x")
+                { Created = t0.AddDays(5) },
+            new SessionInfo("ses_new", "new", "F:/x", "build", t0.AddDays(5), 1, "F:\\x", "F:/x")
+                { Created = t0 },
+            new SessionInfo("ses_mid", "mid", "F:/x/", "build", t0.AddDays(2), 1, "F:/x/", "F:/x/")
+                { Created = t0.AddDays(2) },
         });
         CheckEqual(1, multi.Count, "separator variants of one folder collapse to one project");
         CheckEqual(3, multi[0].SessionCount, "all three sessions land in the same project");
         CheckEqual("ses_new", multi[0].Sessions[0].Id, "sessions come back newest first");
         CheckEqual("ses_old", multi[0].Sessions[^1].Id, "and oldest last");
         CheckEqual(t0.AddDays(5), multi[0].LastUsed, "LastUsed is the newest session");
+        CheckEqual(t0, multi[0].Created,
+                   "Created is the earliest creation time, not the oldest Updated");
+
+        // A catalog written before the created column existed carries none, so every
+        // session in it reports MinValue. The project must say so rather than invent
+        // a date: the UI renders MinValue as an em dash, a 1601 date as a wrong one.
+        var undated = ProjectCatalog.Group(new List<SessionInfo>
+        {
+            new SessionInfo("ses_u1", "u1", "F:/nodate", "build", t0, 1, "F:\\nodate", "F:/nodate"),
+            new SessionInfo("ses_u2", "u2", "F:/nodate", "build", t0.AddDays(3), 1, "F:\\nodate", "F:/nodate"),
+        });
+        CheckEqual(DateTimeOffset.MinValue, undated[0].Created,
+                   "a project whose sessions have no creation time reports none");
 
         // Ordering of the project list itself.
         var ordered = ProjectCatalog.Group(sessions);
