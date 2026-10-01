@@ -130,6 +130,11 @@ namespace SessionLauncher.App.Services
         public const string OcNotRunning = "oc.notRunning";
         public const string OcOpenFailed = "oc.openFailed";
         public const string OcOpenedSet = "oc.openedSet";
+        public const string OcWaitingQuit = "oc.waitingQuit";
+        public const string OcWaitCancelled = "oc.waitCancelled";
+        public const string OcWaitTimedOut = "oc.waitTimedOut";
+        public const string OcRegisteredSet = "oc.registeredSet";
+        public const string CancelWait = "act.cancelWait";
         public const string OcSelection = "oc.selection";
         public const string ProjColSessions = "proj.colSessions";
         public const string ProjColCreated = "proj.colCreated";
@@ -277,6 +282,11 @@ namespace SessionLauncher.App.Services
                     [OcNotRunning] = "已写入 OpenChamber 设置，但它没在运行，���动后生效。",
                     [OcOpenFailed] = "无法启动 OpenChamber：{0}",
                     [OcOpenedSet] = "已在 OpenChamber 中打开 {0} 的 {1} 条会话。",
+        [OcWaitingQuit] = "「{0}」尚未在 OpenChamber 中注册。请从系统托盘图标右键 → Quit 完全退出 OpenChamber（直接关窗口只会隐藏到托盘，进程不会退出）。退出后我会自动完成注册并重新打开。",
+        [OcWaitCancelled] = "已取消等待。",
+        [OcWaitTimedOut] = "等待超时：5 分钟内 OpenChamber 没有退出。请从托盘右键 → Quit 完全退出后再点一次。",
+        [OcRegisteredSet] = "已注册「{0}」并在 OpenChamber 中打开其 {1} 条会话。",
+        [CancelWait] = "取消等待",
                     [OcSelection] = "选中项",
                     [ProjColSessions] = "会话",
                     [ProjColCreated] = "创建时间",
@@ -419,6 +429,11 @@ namespace SessionLauncher.App.Services
                     [OcNotRunning] = "Wrote OpenChamber's settings, but it is not running; it will apply on launch.",
                     [OcOpenFailed] = "Could not start OpenChamber: {0}",
                     [OcOpenedSet] = "Opened {1} session(s) of {0} in OpenChamber.",
+        [OcWaitingQuit] = "\"{0}\" is not registered in OpenChamber. Quit it from the system tray icon (right-click → Quit) — closing the window only hides it to the tray and the process stays alive. I will register it and reopen OpenChamber as soon as it exits.",
+        [OcWaitCancelled] = "Cancelled waiting.",
+        [OcWaitTimedOut] = "Timed out: OpenChamber did not exit within 5 minutes. Quit it from the tray (right-click → Quit) and try again.",
+        [OcRegisteredSet] = "Registered \"{0}\" and opened its {1} session(s) in OpenChamber.",
+        [CancelWait] = "Cancel wait",
                     [OcSelection] = "the selection",
                     [ProjColSessions] = "Sessions",
                     [ProjColCreated] = "Created",

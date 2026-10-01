@@ -6,7 +6,8 @@
         MinHeight="560" MinWidth="980"
         Background="#101319" Foreground="#E2E6EE"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
-        Loaded="OnWindowLoaded">
+        Loaded="OnWindowLoaded"
+        Closed="OnWindowClosed">
 
     <Window.Resources>
 
@@ -591,9 +592,20 @@
             </Grid>
         </Border>
 
-        <!-- ================= status ================= -->
-        <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="2,8,0,0"
-                   Style="{StaticResource Muted}" TextTrimming="CharacterEllipsis" />
+        <!-- ================= status =================
+             A StackPanel, not a lone TextBlock, because the cancel control has to
+             live here and not in ProjectOpenRow: ApplyView collapses ProjectOpenRow
+             when the user switches to the session view, and a wait that becomes
+             uncancellable because someone glanced at another tab is a bug. The
+             status row is always on screen, so the escape hatch always is too. -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="2,8,0,0">
+            <TextBlock x:Name="StatusText" Style="{StaticResource Muted}"
+                       TextTrimming="CharacterEllipsis" />
+            <Button x:Name="CancelWaitButton" Style="{StaticResource IconButton}"
+                    Content="{markup:Tr act.cancelWait}" Margin="10,0,0,0"
+                    Visibility="Collapsed"
+                    Click="OnCancelRegistrationWaitClick" />
+        </StackPanel>
 
         <!-- ================= list (must stay last: it fills the DockPanel) ============ -->
         <!-- ================= the two views =================

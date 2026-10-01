@@ -5,6 +5,9 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Controls;
@@ -66,6 +69,15 @@ namespace SessionLauncher.App
 
         /// <summary>All projects found by the last log scan, unfiltered and unsorted.</summary>
         private List<ProjectRow> _projects = new();
+
+    /// <summary>The in-flight "waiting for OpenChamber to quit" poll, if any.</summary>
+    private ProjectRegistrationWait? _registrationWait;
+
+    /// <summary>Set by the cancel button, so a cancel is not reported as a timeout.</summary>
+    private bool _registrationWaitCancelled;
+
+    /// <summary>Set when the window closes, so a late continuation cannot write.</summary>
+    private bool _closing;
 
         /// <summary>Project list filter text.</summary>
         private string _projectFilter = string.Empty;
@@ -1175,11 +1187,147 @@ namespace SessionLauncher.App
             if (project.SessionCount == 0)
                 throw new InvalidOperationException(Loc.T(Loc.WsNone));
 
+            switch (ProjectRegistrationWait.Decide(
+                       project.IsRegistered, LauncherService.IsOpenChamberRunning()))
+            {
+                case RegistrationAction.OpenByDeepLink:
+                    OpenProjectByDeepLink(project);
+                    break;
+
+                case RegistrationAction.RegisterThenLaunch:
+                    RegisterAndLaunch(project);
+                    break;
+
+                case RegistrationAction.WaitForExit:
+                    WaitForOpenChamberThenRegister(project);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Open a project's sessions with one deep link, writing nothing.
+        /// </summary>
+        private void OpenProjectByDeepLink(ProjectRow project)
+        {
             var ok = _launcher.OpenSessionSetInOpenChamber(project.SessionIds);
 
             StatusText.Text = ok
                 ? Loc.Format(Loc.OcOpenedSet, project.Name, project.SessionCount)
                 : Loc.Format(Loc.OcOpenFailed, project.Name);
+        }
+
+        /// <summary>
+        /// Register a project in OpenChamber and start it on the result.
+        /// </summary>
+        /// <remarks>
+        /// Only reached once OpenChamber is known to be gone. Every step between the
+        /// backup and the relaunch can fail, and each failure mode is different: the
+        /// backup protects the file, <see cref="OpenChamberBridge.VerifyRegistered"/>
+        /// proves the write landed rather than merely not throwing, and the colour is
+        /// carried over so the project does not appear in OpenChamber with no accent.
+        /// </remarks>
+        private void RegisterAndLaunch(ProjectRow project)
+        {
+            var settings = OpenChamberBridge.ResolveSettingsPath()
+                ?? throw new FileNotFoundException(
+                    "OpenChamber settings.json was not found; is OpenChamber installed?");
+
+            // Counted BEFORE the write. VerifyRegistered can only prove nothing was
+            // lost if it is told what "nothing" was, and it only runs at all if this
+            // line succeeded — which is why it comes first and not after the write.
+            var before = OpenChamberBridge.CountTopLevelKeys(
+                File.ReadAllText(settings, Encoding.UTF8));
+
+            OpenChamberBridge.BackupSettings(settings);
+
+            var id = OpenChamberBridge.Activate(project.Path, project.Name, project.Entry.ColorKey);
+            OpenChamberBridge.VerifyRegistered(settings, id, before);
+
+            _launcher.OpenChamberApp();
+            StatusText.Text = Loc.Format(Loc.OcRegisteredSet, project.Name, project.SessionCount);
+        }
+
+        /// <summary>
+        /// Ask the user to quit OpenChamber, then register and relaunch once it has.
+        /// </summary>
+        /// <remarks>
+        /// Closing OpenChamber's window is NOT enough and the message says so. Its
+        /// close handler hides the window to the tray and the process survives
+        /// (main.mjs:2193), so a user who closes the window would otherwise sit here
+        /// until the timeout with no idea why nothing was happening.
+        /// </remarks>
+        private void WaitForOpenChamberThenRegister(ProjectRow project)
+        {
+            // A second click while one is already waiting replaces it rather than
+            // stacking two pollers on the same project.
+            EndRegistrationWait();
+            _registrationWaitCancelled = false;
+
+            var wait = new ProjectRegistrationWait(
+                ProjectRegistrationWait.DefaultPollInterval,
+                ProjectRegistrationWait.DefaultTimeout);
+            _registrationWait = wait;
+
+            StatusText.Text = Loc.Format(Loc.OcWaitingQuit, project.Name);
+            CancelWaitButton.Visibility = Visibility.Visible;
+            ProjectOcButton.IsEnabled = false;
+
+            // The await resumes on a pool thread, so every touch of a WPF element
+            // goes back through the dispatcher. Nothing here touches the UI directly.
+            _ = wait.WaitForExitAsync(CancellationToken.None).ContinueWith(
+                completed =>
+                {
+                    var exited = completed.Status == TaskStatus.RanToCompletion && completed.Result;
+                    var cancelled = _registrationWaitCancelled;
+
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        // Closed while waiting: the user cannot see a registration
+                        // happen, so do not perform one behind their back.
+                        if (_closing) return;
+
+                        EndRegistrationWait();
+
+                        if (exited) RegisterAndLaunch(project);
+                        else
+                        {
+                            StatusText.Text = cancelled
+                                ? Loc.T(Loc.OcWaitCancelled)
+                                : Loc.T(Loc.OcWaitTimedOut);
+                        }
+                    });
+                },
+                TaskScheduler.Default);
+        }
+
+        /// <summary>
+        /// Undo everything <see cref="WaitForOpenChamberThenRegister"/> set up.
+        /// </summary>
+        /// <remarks>
+        /// One method for every exit path — success, cancel, timeout — because the
+        /// button left on screen after a successful registration reads as "still
+        /// waiting", and the action button left disabled is a dead control.
+        /// </remarks>
+        private void EndRegistrationWait()
+        {
+            CancelWaitButton.Visibility = Visibility.Collapsed;
+            ProjectOcButton.IsEnabled = true;
+
+            _registrationWait?.Dispose();
+            _registrationWait = null;
+        }
+
+        private void OnCancelRegistrationWaitClick(object sender, RoutedEventArgs e)
+        {
+            _registrationWaitCancelled = true;
+            _registrationWait?.Cancel();
+        }
+
+        private void OnWindowClosed(object? sender, EventArgs e)
+        {
+            _closing = true;
+            _registrationWait?.Dispose();
+            _registrationWait = null;
         }
 
         /// <summary>Run <paramref name="open"/> on the selected project, reporting by name.</summary>

@@ -33,6 +33,30 @@ using System.Threading.Tasks;
 
 namespace SessionLauncher.App.Services;
 
+/// <summary>What clicking a project row should do.</summary>
+public enum RegistrationAction
+{
+    /// <summary>
+    /// One deep link to the project's newest conversation. OpenChamber resolves
+    /// the session's project, switches to it and shows its sessions. Nothing is
+    /// written anywhere.
+    /// </summary>
+    OpenByDeepLink,
+
+    /// <summary>
+    /// OpenChamber is not running, so back the settings up, add the project, set it
+    /// active, verify, and start OpenChamber on the result.
+    /// </summary>
+    RegisterThenLaunch,
+
+    /// <summary>
+    /// OpenChamber is running and does not know this project. Writing its settings
+    /// now would be a read-modify-write against a file a live process owns, so wait
+    /// for it to exit instead.
+    /// </summary>
+    WaitForExit,
+}
+
 public sealed class ProjectRegistrationWait : IDisposable
 {
     /// <summary>
@@ -104,6 +128,19 @@ public sealed class ProjectRegistrationWait : IDisposable
 
     /// <summary>True while a wait is in flight.</summary>
     public bool IsWaiting => Volatile.Read(ref _waiting) > 0;
+
+    /// <summary>
+    /// Which action opening <paramref name="projectPath"/> calls for.
+    /// </summary>
+    /// <remarks>
+    /// Registered wins over running: a deep link needs nothing from OpenChamber, so
+    /// there is no reason to make the user close anything. The two unregistered
+    /// cases differ only in whether the write is safe yet.
+    /// </remarks>
+    public static RegistrationAction Decide(bool isRegistered, bool openChamberRunning)
+        => isRegistered ? RegistrationAction.OpenByDeepLink
+           : openChamberRunning ? RegistrationAction.WaitForExit
+           : RegistrationAction.RegisterThenLaunch;
 
     /// <summary>
     /// Resolve true once OpenChamber has been gone for two consecutive samples.
@@ -310,6 +347,31 @@ public sealed class ProjectRegistrationWait : IDisposable
             Check(ProjectRegistrationWait.DefaultTimeout == TimeSpan.FromMinutes(5),
                   "the timeout is five minutes");
         }
+
+        // ---- the dispatch decision ----
+        //
+        // Pure, so it can be pinned without a window and without OpenChamber. The
+        // three inputs are the only things that vary, and getting any of them wrong
+        // has a consequence that is not visible until it has already happened:
+        // writing settings.json under a running OpenChamber loses the write, or
+        // sending a deep link for an unregistered project opens nothing.
+
+        Check(Decide(true, false) == RegistrationAction.OpenByDeepLink,
+              "a registered project opens by deep link when OpenChamber is closed");
+        Check(Decide(true, true) == RegistrationAction.OpenByDeepLink,
+              "and identically when it is running — a deep link needs nothing from it");
+        Check(Decide(false, false) == RegistrationAction.RegisterThenLaunch,
+              "an unregistered project with OpenChamber closed is registered immediately");
+        Check(Decide(false, true) == RegistrationAction.WaitForExit,
+              "an unregistered project with OpenChamber running waits instead of writing");
+
+        // Every combination must land on exactly one action; a fourth value would
+        // be a state the UI has no handling for.
+        var seen = new HashSet<RegistrationAction>();
+        foreach (var registered in new[] { false, true })
+            foreach (var running in new[] { false, true })
+                seen.Add(Decide(registered, running));
+        Check(seen.Count == 3, "the four combinations produce exactly three actions");
 
         return n;
     }
