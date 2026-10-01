@@ -56,14 +56,42 @@ public enum ProjectSortMode
     /// folders (runbook, book, kus, tools) clustered under their parent instead of
     /// scattering them through the list.</summary>
     PathDepth,
+
+    /// <summary>
+    /// Projects OpenChamber does not already know come first, then most recently
+    /// used.
+    /// </summary>
+    /// <remarks>
+    /// A registered project opens with one deep link and costs nothing; an
+    /// unregistered one needs OpenChamber closed, its settings written and itself
+    /// relaunched. That is the difference between an instant action and an
+    /// interruption, so the projects that need attention lead.
+    /// <para>
+    /// LAST IN THE ENUM, deliberately. <c>AppSettings.ProjectSort</c> is persisted
+    /// as an integer and defaults to <see cref="LastUsed"/>; inserting a member
+    /// ahead of it would silently change what every saved setting means.
+    /// </para>
+    /// </remarks>
+    UnregisteredFirst,
 }
 
 /// <summary>Applies a <see cref="ProjectSortMode"/> to a project list.</summary>
 public static class ProjectSort
 {
     /// <summary>Order <paramref name="projects"/> by <paramref name="mode"/>.</summary>
+    /// <param name="projects">The projects to order.</param>
+    /// <param name="mode">How to order them.</param>
+    /// <param name="registeredPaths">
+    /// NORMALISED paths of the projects OpenChamber already lists, for
+    /// <see cref="ProjectSortMode.UnregisteredFirst"/>. Optional, and ignored by
+    /// every other mode: the modes that predate it have no business knowing about
+    /// another application's state, and making them read it would mean the list
+    /// reorders itself when OpenChamber's project list changes.
+    /// </param>
     public static IReadOnlyList<ProjectEntry> Apply(
-        IEnumerable<ProjectEntry> projects, ProjectSortMode mode)
+        IEnumerable<ProjectEntry> projects,
+        ProjectSortMode mode,
+        IReadOnlySet<string>? registeredPaths = null)
     {
         ArgumentNullException.ThrowIfNull(projects);
 
@@ -114,6 +142,16 @@ public static class ProjectSort
                 .ThenBy(p => p.Label, byName)
                 .ThenBy(p => p.Path, byPath),
 
+            // The grouping is the FIRST key, so it beats recency outright: an
+            // unregistered project leads even when a registered one was used an
+            // hour ago. Registering a project is the rarer, higher-priority task.
+            ProjectSortMode.UnregisteredFirst => projects
+                .OrderBy(p => registeredPaths is not null
+                              && registeredPaths.Contains(ProjectCatalog.Normalize(p.Path))
+                    ? 1 : 0)
+                .ThenByDescending(p => p.LastUsed)
+                .ThenBy(p => p.Path, byPath),
+
             _ => projects
                 .OrderByDescending(p => p.LastUsed)
                 .ThenBy(p => p.Path, byPath),
@@ -146,6 +184,9 @@ public static class ProjectSort
         ProjectSortMode.NameAsc => ProjectSortMode.NameDesc,
         ProjectSortMode.NameDesc => ProjectSortMode.NameAsc,
         ProjectSortMode.PathDepth => ProjectSortMode.PathDepth,
+        // No directional sense of its own, so it is its own partner — the same
+        // reasoning as PathDepth.
+        ProjectSortMode.UnregisteredFirst => ProjectSortMode.UnregisteredFirst,
         _ => ProjectSortMode.LastUsed,
     };
 
@@ -328,6 +369,92 @@ public static class ProjectSort
             },
             ProjectSortMode.LastUsed).Select(p => p.Path).ToList();
         Check(repeat.SequenceEqual(tie), "the tiebreak is stable across calls");
+
+        // ---- UnregisteredFirst ----
+        //
+        // Registered projects can be opened with a deep link and cost nothing;
+        // unregistered ones need OpenChamber closed, a settings write and a relaunch.
+        // That is the difference between an instant action and an interruption, so
+        // the projects that need attention lead.
+
+        DateTimeOffset LastUsedOf(List<string> group, string path)
+            => data.Single(p => p.Path == path).LastUsed;
+
+        static bool NonIncreasing(IEnumerable<DateTimeOffset> values)
+        {
+            var list = values.ToList();
+            for (var i = 1; i < list.Count; i++)
+                if (list[i] > list[i - 1]) return false;
+            return true;
+        }
+
+        {
+            var registered3 = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Y:\\alpha", "W:\\delta", "X:\\gamma",
+            };
+
+            var grouped = ProjectSort.Apply(data, ProjectSortMode.UnregisteredFirst, registered3);
+            var head = grouped.Take(4).Select(p => p.Path).ToList();
+            var tail = grouped.Skip(4).Select(p => p.Path).ToList();
+
+            // Set membership, not exact order: within a group the order is by
+            // recency, and several fixtures share a band, so pinning the sequence
+            // here would test the fixture rather than the grouping.
+            var expectedUnregistered = new[] { "X:\\beta", "V:\\alpha", "U:\\epsilon", "T:\\zeta" };
+            Check(head.OrderBy(s => s, StringComparer.Ordinal)
+                      .SequenceEqual(expectedUnregistered.OrderBy(s => s, StringComparer.Ordinal)),
+                  "the four unregistered projects lead, got " + string.Join(",", head));
+            Check(tail.OrderBy(s => s, StringComparer.Ordinal)
+                      .SequenceEqual(registered3.OrderBy(s => s, StringComparer.Ordinal)),
+                  "and the three registered ones follow, got " + string.Join(",", tail));
+
+            // Each group is internally recency-ordered, which is what makes the
+            // mode a sort rather than a partition.
+            Check(NonIncreasing(head.Select(p => LastUsedOf(head, p))),
+                  "the unregistered group is ordered by recency descending");
+            Check(NonIncreasing(tail.Select(p => LastUsedOf(tail, p))),
+                  "the registered group is ordered by recency descending");
+
+            // The grouping must beat recency, and that is the whole point of the mode. The
+            // list's leader under plain recency is a registered project; under this
+            // mode it no longer leads, with four unregistered projects ahead of it.
+            var recencyLeader = ProjectSort.Apply(data, ProjectSortMode.LastUsed)[0].Path;
+            Check(registered3.Contains(recencyLeader),
+                  "the list's leader under plain recency is a registered project");
+            Check(grouped[0].Path != recencyLeader,
+                  "under UnregisteredFirst it does not — the grouping outranks recency");
+
+            // No registration data means no reordering: the mode degrades to plain
+            // recency rather than inventing an order.
+            var unknown = ProjectSort.Apply(data, ProjectSortMode.UnregisteredFirst);
+            var byRecency = ProjectSort.Apply(data, ProjectSortMode.LastUsed);
+            Check(byRecency[0].Path == unknown[0].Path,
+                       "with no registration data the mode leads with the most recent project");
+            Check(unknown.Select(p => p.LastUsed)
+                         .Zip(unknown.Select(p => p.LastUsed).Skip(1), (a, b) => a >= b)
+                         .All(ok => ok),
+                  "and the whole list is still ordered by recency descending");
+
+            // The other eight modes must be untouched by the argument.
+            foreach (ProjectSortMode m in Enum.GetValues<ProjectSortMode>())
+            {
+                if (m == ProjectSortMode.UnregisteredFirst) continue;
+                Check(ProjectSort.Apply(data, m).Select(p => p.Path)
+                          .SequenceEqual(ProjectSort.Apply(data, m, registered3).Select(p => p.Path)),
+                      $"{m} ignores the registered set");
+            }
+        }
+
+        Check(ProjectSort.Toggle(ProjectSortMode.UnregisteredFirst)
+                == ProjectSortMode.UnregisteredFirst,
+              "UnregisteredFirst is its own reverse, like PathDepth");
+
+        // The new member has to go LAST. AppSettings.ProjectSort defaults to
+        // LastUsed and is persisted as an integer, so any member inserted ahead of
+        // it would silently change what every existing saved setting means.
+        Check(Enum.GetValues<ProjectSortMode>()[0] == ProjectSortMode.LastUsed,
+                   "LastUsed is still the enum's zero value");
 
         // Every mode ends in the Path tiebreak, so no mode can leak input order.
         foreach (ProjectSortMode m in Enum.GetValues<ProjectSortMode>())

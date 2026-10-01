@@ -95,13 +95,26 @@ Write-Host ("window: x={0} y={1} w={2} h={3}" -f $win.X, $win.Y, $win.Width, $wi
 # The names each view's columns are expected to carry, and the two that were
 # removed. "absent" is the pass condition for the removals.
 $sessionHeaders = @('选', '更新时间', '消息数', '标题', '文件夹', '创建时间', '会话 ID')
-$projectHeaders = @('会话', '创建时间', '最近使用', '路径', '颜色')
+$projectHeaders = @('OpenChamber', '项目', '会话', '创建时间', '最近使用', '路径', '颜色')
 
 Switch-View '会话'
 Show-Headers '会话 view:' $sessionHeaders
 
 Switch-View '项目'
 Show-Headers '项目 view:' $projectHeaders
+
+# The registration marks. OpenChamber holds four projects on this machine, so a
+# working read of its settings.json must produce exactly four filled circles.
+$filled = 0; $hollow = 0
+foreach ($t in (Get-Texts)) {
+    if (-not (On-Screen $t)) { continue }
+    if ($t.Current.Name -eq [char]0x25CF) { $filled++ }
+    elseif ($t.Current.Name -eq [char]0x25CB) { $hollow++ }
+}
+Write-Host ""
+Write-Host "  registration marks on screen: filled=$filled hollow=$hollow"
+if ($filled -lt 1) { Write-Host "     [FAIL] no filled marks — the settings read produced nothing registered" }
+else { Write-Host "     [ok]   at least one project is read as registered" }
 
 Write-Host ""
 Write-Host "OK pid=$($p.Id)"

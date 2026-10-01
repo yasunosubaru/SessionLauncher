@@ -88,6 +88,7 @@ namespace SessionLauncher.App.Services
 
         // Sort-mode labels, in enum order.
         public const string ProjSortLastUsed = "proj.sortLastUsed";
+        public const string ProjSortUnregisteredFirst = "proj.sortUnregisteredFirst";
         public const string ProjSortLeastUsed = "proj.sortLeastUsed";
         public const string ProjSortMostVisited = "proj.sortMostVisited";
         public const string ProjSortMostActive = "proj.sortMostActive";
@@ -132,6 +133,7 @@ namespace SessionLauncher.App.Services
         public const string OcSelection = "oc.selection";
         public const string ProjColSessions = "proj.colSessions";
         public const string ProjColCreated = "proj.colCreated";
+        public const string ProjColMark = "proj.colMark";
 
         public const string StatusOpenedOne = "st.openedOne";
         public const string StatusOpenedMany = "st.openedMany";
@@ -226,6 +228,7 @@ namespace SessionLauncher.App.Services
                     [ProjOpenExplorer] = "资源管理器",
                     [ProjOpenInOpencode] = "在 opencode 中打开",
                     [ProjSortLastUsed] = "最近使用",
+        [ProjSortUnregisteredFirst] = "未注册在前",
                     [ProjSortLeastUsed] = "最少使用",
                     [ProjSortMostVisited] = "访问最多",
                     [ProjSortMostActive] = "最活跃",
@@ -277,6 +280,7 @@ namespace SessionLauncher.App.Services
                     [OcSelection] = "选中项",
                     [ProjColSessions] = "会话",
                     [ProjColCreated] = "创建时间",
+        [ProjColMark] = "OpenChamber",
                     [StatusSelectAll] = "已选择全部 {0} 条会话（当前显示 {1} 条）。",
                     [StatusCleared] = "已取消选择。",
                     [StatusPickFirst] = "请先勾选至少一条会话。",
@@ -363,6 +367,7 @@ namespace SessionLauncher.App.Services
                     [ProjOpenExplorer] = "Explorer",
                     [ProjOpenInOpencode] = "Open in opencode",
                     [ProjSortLastUsed] = "Recently used",
+        [ProjSortUnregisteredFirst] = "Unregistered first",
                     [ProjSortLeastUsed] = "Least recently used",
                     [ProjSortMostVisited] = "Most visited",
                     [ProjSortMostActive] = "Most active",
@@ -417,6 +422,7 @@ namespace SessionLauncher.App.Services
                     [OcSelection] = "the selection",
                     [ProjColSessions] = "Sessions",
                     [ProjColCreated] = "Created",
+        [ProjColMark] = "OpenChamber",
                     [StatusSelectAll] = "Selected all {0} conversations ({1} currently shown).",
                     [StatusCleared] = "Selection cleared.",
                     [StatusPickFirst] = "Tick at least one conversation first.",

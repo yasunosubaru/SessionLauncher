@@ -677,6 +677,8 @@
                         <!-- ColumnHeaderContainerStyle, not ColumnHeaderStyle: the latter
                              does not exist on GridView (MC3072). -->
                         <GridView ColumnHeaderContainerStyle="{StaticResource ProjectColumnHeader}">
+                            <GridViewColumn x:Name="PColMark" Header="{markup:Tr proj.colMark}" Width="46"
+                                            DisplayMemberBinding="{Binding MarkText}" />
                             <GridViewColumn x:Name="PColName" Header="{markup:Tr proj.colName}" Width="330">
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>

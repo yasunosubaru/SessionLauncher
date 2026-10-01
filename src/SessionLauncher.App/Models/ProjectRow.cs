@@ -68,6 +68,28 @@ public sealed class ProjectRow : INotifyPropertyChanged
 
     public bool DirectoryExists => Entry.DirectoryExists;
 
+    /// <summary>
+    /// True when OpenChamber already lists this project, so opening it costs one
+    /// deep link and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Set once at load from OpenChamber's own project list. It is a fact about
+    /// another application, so it is an init property rather than something this
+    /// row computes: a row cannot ask OpenChamber what OpenChamber knows, and a
+    /// computed property that silently answered "no" would mislabel every project
+    /// the moment the settings file could not be read.
+    /// </remarks>
+    public bool IsRegistered { get; init; }
+
+    /// <summary>
+    /// Filled circle when OpenChamber knows the project, hollow when it does not.
+    /// </summary>
+    /// <remarks>
+    /// A shape rather than a colour or a word, so it survives both themes, needs no
+    /// legend, and is still legible in the one-column-wide space it gets.
+    /// </remarks>
+    public string MarkText => IsRegistered ? "●" : "○";
+
     public bool IsSelected
     {
         get => _isSelected;

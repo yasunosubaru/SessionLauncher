@@ -242,6 +242,7 @@ namespace SessionLauncher.App
             Set(ColTitle, 380);
             Set(ColFolder, 220);
 
+            Set(PColMark, 46);
             Set(PColName, 330);
             Set(PColSessions, 92);
             Set(PColCreated, 150);
@@ -757,6 +758,11 @@ namespace SessionLauncher.App
         /// <summary>Sort modes paired with their localised labels, in enum order.</summary>
         private static readonly (ProjectSortMode Mode, string Key)[] ProjectSortModes =
         {
+            // First in the combo, but NOT the app default: AppSettings.ProjectSort
+            // stays LastUsed so an existing saved choice is untouched. This is
+            // offered, one click away, rather than imposed on someone who has
+            // already picked an order.
+            (ProjectSortMode.UnregisteredFirst, Loc.ProjSortUnregisteredFirst),
             (ProjectSortMode.LastUsed, Loc.ProjSortLastUsed),
             (ProjectSortMode.LeastUsed, Loc.ProjSortLeastUsed),
             (ProjectSortMode.MostVisited, Loc.ProjSortMostVisited),
@@ -891,23 +897,49 @@ namespace SessionLauncher.App
         /// </remarks>
         private void ReloadProjects()
         {
+            // One read of OpenChamber's settings serves two purposes: the colour a
+            // project already has there, and whether it is there at all. They are
+            // read together because a failure must degrade both the same way.
             Dictionary<string, string>? colors = null;
+            var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             try
             {
-                colors = OpenChamberBridge.ReadProjects()
+                var theirs = OpenChamberBridge.ReadProjects()
                     .Where(p => p.Path is not null)
+                    .ToList();
+
+                colors = theirs
                     .GroupBy(p => ProjectCatalog.Normalize(p.Path), StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => g.Key, g => g.First().Color ?? string.Empty,
                                   StringComparer.OrdinalIgnoreCase);
+
+                // Empty strings are dropped, so a registered project with no colour
+                // still counts as registered. IsRegistered's own normalisation runs
+                // again per project; doing it once here would be a second source of
+                // truth for what counts as the same folder.
+                foreach (var p in theirs)
+                {
+                    var key = ProjectCatalog.Normalize(p.Path);
+                    if (key.Length > 0) registered.Add(key);
+                }
             }
             catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException
                                           or UnauthorizedAccessException)
             {
-                colors = null;   // no colour info is fine; we assign our own
+                // An unreadable settings file leaves every project unregistered, which
+                // is honest: we do not know that OpenChamber has it. It is not a throw,
+                // because this runs during Load and the launcher is still useful
+                // without the marks.
+                colors = null;
             }
 
             _projects = ProjectCatalog.Group(_all, colors)
-                                     .Select(p => new ProjectRow(p))
+                                     .Select(p => new ProjectRow(p)
+                                     {
+                                         IsRegistered = registered.Contains(
+                                             ProjectCatalog.Normalize(p.Path)),
+                                     })
                                      .ToList();
 
             ApplyProjectFilter(_projectFilter, _projectSort, _hideMissing);
@@ -930,7 +962,14 @@ namespace SessionLauncher.App
             }
 
             // ProjectSort orders ProjectEntry records, so map back onto the rows after.
-            var ordered = ProjectSort.Apply(rows.Select(p => p.Entry), sort);
+            // The set is normalised here because ProjectEntry.Path is already
+            // normalised but the sort's contract is "normalised paths".
+            var registered = rows
+                .Select(p => ProjectCatalog.Normalize(p.Path))
+                .Where(k => k.Length > 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var ordered = ProjectSort.Apply(rows.Select(p => p.Entry), sort, registered);
             var byPath = _projects
                 .GroupBy(p => p.Path, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
