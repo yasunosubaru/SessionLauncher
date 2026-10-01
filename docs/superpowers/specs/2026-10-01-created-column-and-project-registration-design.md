@@ -185,4 +185,47 @@ previous round of damage came from window manipulation, and it is not repeated.
   `SessionTabsStrip` whenever a project label is showing, and `session-tabs-store` does
   not exist in local storage, so the tab-strip approach achieves nothing visible.
 - Changing OpenChamber's own configuration format or source.
+
+## Verification log
+
+2026-10-01. All checks read state through UIA on our own window, or read
+`settings.json` as a file. OpenChamber's window was never moved, resized, topmosted,
+minimised, closed or clicked; its four processes were only ever counted.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Catalog regenerated from `opencode.db` | 141 → 157 sessions, **0 lost**; header 8 columns; 0 rows whose column count is not 8; 0 empty `created` cells; 0 duplicate ids |
+| 2 | App reads the new catalog | status line reports **157 条会话** |
+| 3 | 会话 view columns | 选 · 更新时间 · 消息数 · 标题 · 文件夹 · **创建时间**; **会话 ID absent** |
+| 4 | 项目 view columns | OpenChamber · 项目 · 会话 · **创建时间** · 最近使用 · 路径; **颜色 absent** |
+| 5 | Registration marks | **4 filled, 21 hollow** — matching the four projects in the live `settings.json` exactly |
+| 6 | Font scaling | at **160 %** (above the 140 % target): 82 complete timestamps, **0 truncated** |
+| 7 | Registered project → deep link | `activeProjectId` moved on its own from `path_QzovVXNlcnMvZGVtbw` to capstone's `path_RjovZXhhbXBsZS…`; top-level keys 58 → 58; projects 4 → 4; project set unchanged → **the launcher wrote nothing** |
+| 8 | Unregistered project, OpenChamber running | tray-Quit instruction shown; 取消等待 button revealed; `settings.json` **byte-identical** |
+| 9 | Cancel | 已取消等待。 ; `settings.json` still byte-identical; button hidden |
+| 10 | Timeout | message shown; `settings.json` still byte-identical; button hidden |
+
+Steps 1–10 are automated and repeatable via `tools\test-catalog.mjs`,
+`tools\run-selftest.ps1` (331 assertions), `tools\verify-columns.ps1`,
+`tools\verify-scaling.ps1`, `tools\verify-deep-link.ps1` and
+`tools\verify-registration.ps1`.
+
+### Not verified here
+
+**The full write path — quit OpenChamber, click an ○ project, watch it register and
+relaunch.** It is the one remaining step and it is deliberately left to you, because
+it requires quitting OpenChamber from its tray icon and that is your window, not
+ours. The steps:
+
+1. Right-click the OpenChamber tray icon → **Quit**, and confirm its dialog. Closing
+   the window is not enough — that only hides it to the tray and the process stays.
+2. In SessionLauncher, switch to 项目, pick a row marked **○**, and click 打开整套会话.
+3. Expect, in order: a backup appearing under
+   `%LOCALAPPDATA%\SessionLauncher\backups\settings-*.json`; OpenChamber starting; and
+   its sidebar showing that project node with its conversations beneath it.
+4. The row's mark becomes **●** after the next Reload.
+
+To confirm nothing was lost, compare the top-level key count of
+`%USERPROFILE%\.config\openchamber\settings.json` before and after — it is **58**
+today and `VerifyRegistered` will have thrown rather than let a write drop any.
 - Registering a project while OpenChamber is running.

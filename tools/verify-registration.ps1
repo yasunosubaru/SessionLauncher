@@ -4,7 +4,13 @@
 # OUR OWN window. Never drives input at OpenChamber and never touches its
 # settings: the point is to watch the launcher wait, not to make it write.
 [CmdletBinding()]
-param([int]$WaitSeconds = 12)
+param(
+    [int]$WaitSeconds = 12,
+    # Skip the cancel click so the wait runs to its timeout instead.
+    [switch]$SkipCancel,
+    # How long to watch for the timeout message before giving up.
+    [int]$TimeoutWatchSeconds = 20
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
@@ -113,7 +119,33 @@ $after = Hash-Of $settings
 Write-Host "  settings hash after:  $after"
 Write-Host ("  settings UNCHANGED:   {0}" -f ($before -eq $after))
 
-if ($cancel) {
+if ($SkipCancel) {
+    Write-Host ""
+    Write-Host "== watching for the timeout (not cancelling) =="
+    $watch = (Get-Date).AddSeconds($TimeoutWatchSeconds)
+    $timedOut = $false
+    while ((Get-Date) -lt $watch) {
+        Start-Sleep -Milliseconds 700
+        foreach ($t in (Get-Texts)) {
+            if (-not (On-Screen $t)) { continue }
+            if ($t.Current.Name -match '超时|timed out') {
+                Write-Host "  timed-out message: $($t.Current.Name)"
+                $timedOut = $true
+            }
+        }
+        if ($timedOut) { break }
+    }
+    if (-not $timedOut) { Write-Host "  [FAIL] no timeout message within $TimeoutWatchSeconds s" }
+
+    $final = Hash-Of $settings
+    Write-Host "  settings hash after timeout: $final"
+    Write-Host ("  settings UNCHANGED:          {0}" -f ($final -eq $before))
+
+    $cancelStill = Find-Text '取消等待'
+    if (-not $cancelStill) { $cancelStill = Find-Text 'Cancel wait' }
+    Write-Host ("  cancel button hidden:        {0}" -f (-not [bool]$cancelStill))
+}
+elseif ($cancel) {
     Write-Host ""
     Write-Host "== cancelling =="
     Invoke-Ancestor $cancel | Out-Null
