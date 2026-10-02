@@ -380,9 +380,8 @@ namespace SessionLauncher.App
         {
             StatusText.Text = string.Empty;
 
-            // Reload means "re-read whatever this view shows". Rescanning 50 MB of logs
-            // on a session-list refresh would be absurd, so the two are split.
-            if (_view == AppView.Projects) { ReloadProjects(); return; }
+            // Reload means "re-read whatever this view shows".
+            if (_view == AppView.Projects) { ReloadProjectsView(); return; }
 
             if (!LoadCatalog())
             {
@@ -393,6 +392,31 @@ namespace SessionLauncher.App
             ApplyFilter();
             UpdateSelectionUi();
         }
+
+        /// <summary>
+        /// Refresh the project list: the catalog underneath it AND OpenChamber's own
+        /// project list, which is what the ●/○ marks are read from.
+        /// </summary>
+        /// <remarks>
+        /// Both halves matter, and re-grouping alone was quietly wrong.
+        /// <c>ReloadProjects</c> groups <c>_all</c>, and <c>_all</c> is only refreshed by
+        /// the session path — so refreshing the project view used to re-read
+        /// OpenChamber's marks while re-grouping the conversations as they were when
+        /// the window opened. A conversation started since then, in a directory that
+        /// had none, produced no new project at all: exactly the case the user pressed
+        /// refresh to see.
+        /// </remarks>
+        private void ReloadProjectsView()
+        {
+            if (LoadCatalog()) ReloadProjects();
+            else TotalChip.Text = "—";
+        }
+
+        /// <summary>
+        /// Refresh button in the project panel.
+        /// </summary>
+        private void OnProjectReloadClick(object sender, RoutedEventArgs e)
+            => Guard(ReloadProjectsView);
 
         /// <summary>
         /// Run the search engine over the catalog and rebuild the visible rows.

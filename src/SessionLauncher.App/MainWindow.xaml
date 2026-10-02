@@ -25,7 +25,12 @@
         <SolidColorBrush x:Key="Surface"   Color="#99171C25" />
         <SolidColorBrush x:Key="SurfaceAlt" Color="#901B212C" />
         <SolidColorBrush x:Key="Border"    Color="#5928303E" />
-        <SolidColorBrush x:Key="Subtle"    Color="#8A93A4" />
+        <!-- Subtle is the muted text colour, and it is muted for a reason — but "muted"
+             was costing legibility once the glass went in. At #8A93A4 it measured
+             2.48:1 against the light pool behind the header, which is half the 4.5:1
+             WCAG wants for text this size. #BCC6D8 measures 4.9:1 there while still
+             reading as secondary next to the #E2E6EE body text. -->
+        <SolidColorBrush x:Key="Subtle"    Color="#BCC6D8" />
         <SolidColorBrush x:Key="Accent"    Color="#5C86FF" />
 
         <!-- The root is a gradient, not a flat fill. A pane of glass lit from above
@@ -42,6 +47,85 @@
         <LinearGradientBrush x:Key="GlassEdge" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Offset="0" Color="#40FFFFFF" />
             <GradientStop Offset="1" Color="#00FFFFFF" />
+        </LinearGradientBrush>
+
+        <!-- ============ why the backdrop needs a LIGHT SOURCE ============
+             A translucent panel is only visible if there is something behind it worth
+             seeing through to. The backdrop used to be one nearly-uniform dark
+             gradient from #1A1F2B to #0D1016, so a 60%-alpha panel over it resolved to
+             the same colour as an opaque one and every pane read as flat paint. The
+             glass effect was not weak; it had nothing to refract.
+             <para>
+             This radial pool of light is that something. Panels now sit in front of a
+             bright falloff, so the part of a panel nearest the light is measurably
+             lighter than the part near its foot, and the eye reads a slab of glass
+             rather than a rectangle.
+             </para> -->
+        <RadialGradientBrush x:Key="BackLight" Center="0.4,-0.05" RadiusX="1.25" RadiusY="1.55"
+                             GradientOrigin="0.4,-0.05">
+            <!-- The peak is held down to #7486B8 on purpose. At #8FA0D2F7 the
+                 brightest part of the pool sat directly under the header, and the
+                 muted path label measured 2.48:1 against it — well under the 4.5:1
+                 WCAG wants for body text. A blown-out highlight is not worth an
+                 unreadable label. -->
+            <GradientStop Offset="0"    Color="#7486B8" />
+            <GradientStop Offset="0.14" Color="#5C6C9ECC" />
+            <GradientStop Offset="0.34" Color="#42548AAC" />
+            <GradientStop Offset="0.58" Color="#27376084" />
+            <GradientStop Offset="0.82" Color="#141C3050" />
+            <GradientStop Offset="1"    Color="#000A0E18" />
+        </RadialGradientBrush>
+
+        <!-- A cool sheen raked across the upper left, the second half of the effect:
+             a pane of glass is never lit evenly. -->
+        <LinearGradientBrush x:Key="BackSheen" StartPoint="0,0" EndPoint="1,0.9">
+            <GradientStop Offset="0"   Color="#3A8AB4D8" />
+            <GradientStop Offset="0.45" Color="#12364870" />
+            <GradientStop Offset="1"   Color="#00243040" />
+        </LinearGradientBrush>
+
+        <!-- ============ the glass itself ============
+             A vertical gradient, not a flat fill. Light enters the top of a slab and
+             is absorbed by the bottom, so the top is lighter and more saturated than
+             the foot. A flat tint has no depth and reads as a hole cut in the page.
+             The alpha stays low enough that the light pool behind is visible THROUGH
+             the pane — that transmission is the whole effect.
+             <para>
+             The falloff is deliberately shallow. A steep one left the lower half of a
+             1000px window looking exactly like the flat fill it replaced, which is the
+             failure mode this is meant to avoid.
+             </para> -->
+        <LinearGradientBrush x:Key="Glass" StartPoint="0.1,0" EndPoint="0.4,1">
+            <GradientStop Offset="0"    Color="#E24A5C7A" />
+            <GradientStop Offset="0.30" Color="#CE3A4A66" />
+            <GradientStop Offset="0.68" Color="#AC2B374D" />
+            <GradientStop Offset="1"    Color="#9A212B3E" />
+        </LinearGradientBrush>
+
+        <!-- The same idea, one step lighter and flatter, for the inset wells (search
+             boxes, toolbars) that sit INSIDE a pane rather than being panes. -->
+        <LinearGradientBrush x:Key="GlassWell" StartPoint="0.1,0" EndPoint="0.4,1">
+            <GradientStop Offset="0" Color="#CC44526A" />
+            <GradientStop Offset="1" Color="#A8293346" />
+        </LinearGradientBrush>
+
+        <!-- The specular edge. This is the single strongest glass cue there is: a hard
+             bright line where light catches the top arris. Applied 2px because at 1px
+             against a dark UI it reads as a border rather than as a highlight. -->
+        <LinearGradientBrush x:Key="RimLight" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Offset="0"    Color="#FFFFFFFF" />
+            <GradientStop Offset="0.30" Color="#DCF0FFFF" />
+            <GradientStop Offset="0.62" Color="#9CC4E8FF" />
+            <GradientStop Offset="1"    Color="#3E7A9EC0" />
+        </LinearGradientBrush>
+
+        <!-- A faint rim on the left and right edges too. Glass has thickness on every
+             side; a highlight on one edge alone reads as a lit card. -->
+        <LinearGradientBrush x:Key="RimLightH" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Offset="0"   Color="#C4E2F2FF" />
+            <GradientStop Offset="0.10" Color="#4C7796B4" />
+            <GradientStop Offset="0.90" Color="#4C7796B4" />
+            <GradientStop Offset="1"   Color="#A8D2E6FF" />
         </LinearGradientBrush>
 
         <!-- ============ buttons ============ -->
@@ -178,16 +262,25 @@
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
-                <!-- Row fills stay fairly opaque (alpha ~E8) so text contrast survives
-                     the acrylic behind them, but not fully opaque, or the list stops
-                     looking like part of the glass at all. -->
+                <!-- Row fills are TRANSLUCENT on purpose. At alpha E8 (91%) they were
+                     effectively opaque, and since the list occupies nine tenths of the
+                     window that made every pane behind them invisible — the glass effect
+                     was not weak, it was covered.
+                     <para>
+                     Readability is preserved from the other end rather than by
+                     opacity: the text is #E2E6EE, the rows sit on a pane that runs from
+                     a lit top to a dark foot, and even over the brightest part of the
+                     backdrop the composited row stays around #263040, which is still
+                     roughly 8:1 against the text. Nothing here needs an opaque fill to
+                     be legible.
+                     </para> -->
                 <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self},
                                           Path=AlternationIndex}" Value="0">
-                    <Setter Property="Background" Value="#E8141922" />
+                    <Setter Property="Background" Value="#8C141922" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self},
                                           Path=AlternationIndex}" Value="1">
-                    <Setter Property="Background" Value="#E8171D27" />
+                    <Setter Property="Background" Value="#7A171D27" />
                 </DataTrigger>
                 <!-- A ListViewItem's DataContext is the row itself, so the checkbox state
                      is readable straight from a trigger on the container style. -->
@@ -386,8 +479,12 @@
 
     </Window.Resources>
 
-    <!-- Root uses the gradient, not the flat Bg: see BgGradient. -->
+    <!-- Root uses the gradient, not the flat Bg: see BgGradient. The light pool and
+         sheen go ON TOP of it — they are what the translucent panes have to show
+         through, and without them every pane below resolves to one flat colour. -->
     <Border Background="{StaticResource BgGradient}">
+    <Border Background="{StaticResource BackLight}">
+    <Border Background="{StaticResource BackSheen}">
     <DockPanel Margin="18">
 
         <!-- ================= header ================= -->
@@ -501,14 +598,24 @@
              keeps the search box, sort control and action bar meaningful in both. -->
 
         <!-- ================= selection summary + actions ================= -->
-        <Border DockPanel.Dock="Bottom" Margin="0,12,0,0" CornerRadius="7"
-                Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}"
+        <Border DockPanel.Dock="Bottom" Margin="0,12,0,0" CornerRadius="14"
+                Background="{StaticResource Glass}" BorderBrush="{StaticResource RimLightH}"
                 BorderThickness="1" Padding="12,9">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+
+                <!-- Top specular edge. A Border takes one child, so the highlight is
+                     laid over the content as a sibling in the same Grid cell rather
+                     than nested. IsHitTestVisible keeps it off the click path — it is
+                     decoration, and a decorative element that eats clicks is a bug.
+                     ColumnSpan is load-bearing: without it the highlight is confined
+                     to column 0 and stops halfway across the bar. -->
+                <Border Grid.ColumnSpan="2" BorderBrush="{StaticResource RimLight}"
+                        BorderThickness="0,2,0,0" CornerRadius="8,8,0,0"
+                        IsHitTestVisible="False" />
 
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock x:Name="SelectionText" FontWeight="SemiBold"
@@ -627,9 +734,9 @@
              The two views are mutually exclusive (one Collapsed while the other is
              Visible), so they belong in the same slot, overlapping. -->
         <Grid>
-        <Border Grid.Column="0" Background="{StaticResource Surface}"
-                BorderBrush="{StaticResource Border}" BorderThickness="1"
-                CornerRadius="7" Margin="0,0,0,12" Visibility="Collapsed"
+        <Border Grid.Column="0" Background="{StaticResource Glass}"
+                BorderBrush="{StaticResource RimLightH}" BorderThickness="1"
+                CornerRadius="14" Margin="0,0,0,12" Visibility="Collapsed"
                 x:Name="ProjectPanel">
             <Grid>
                 <Grid.RowDefinitions>
@@ -638,10 +745,16 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- project-only controls: filter, sort, hide-missing -->
+                <!-- Top specular edge, matching SessionPanel. -->
+                <Border Grid.RowSpan="3" BorderBrush="{StaticResource RimLight}"
+                        BorderThickness="0,2,0,0" CornerRadius="13,13,0,0"
+                        IsHitTestVisible="False" />
+
+                <!-- project-only controls: filter, sort, hide-missing, refresh -->
                 <Grid Grid.Row="0" Margin="10,8,10,8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
@@ -684,6 +797,18 @@
                               Style="{StaticResource DarkCheck}" IsChecked="True"
                               Checked="OnHideMissingChanged" Unchecked="OnHideMissingChanged"
                               Content="{markup:Tr proj.hideMissing}" />
+
+                    <!-- The session view's refresh lives in SessionToolbar, which
+                         ApplyView COLLAPSES in this view — so until this button
+                         existed the project list had no way to be refreshed at all
+                         without switching tabs. A project list goes stale the moment
+                         a conversation starts somewhere new, and that is exactly when
+                         the user is most likely to be looking at it. -->
+                    <Button x:Name="ProjectReloadButton" Grid.Column="3"
+                            Content="{markup:Tr btn.reload}"
+                            Click="OnProjectReloadClick" Margin="14,0,0,0"
+                            ToolTip="{markup:Tr proj.reloadTip}"
+                            VerticalAlignment="Center" />
                 </Grid>
 
                 <ListView Grid.Row="1" x:Name="ProjectList"
@@ -754,9 +879,16 @@
              in the project view while showing nothing, which is what "the whole project
              screen looks like it never loaded" actually was. The Border must be what
              gets collapsed. -->
-        <Border x:Name="SessionPanel" Background="{StaticResource Surface}"
-                BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8"
+        <Border x:Name="SessionPanel" Background="{StaticResource Glass}"
+                BorderBrush="{StaticResource RimLightH}" BorderThickness="1" CornerRadius="14"
                 ClipToBounds="True">
+            <Grid>
+                <!-- The 1px specular line along the TOP edge. Without it a translucent
+                     fill still reads as paint; this is the detail that reads as
+                     thickness. Laid over the list rather than nested, because a Border
+                     accepts one child. -->
+                <Border BorderBrush="{StaticResource RimLight}" BorderThickness="0,2,0,0"
+                        CornerRadius="13,13,0,0" IsHitTestVisible="False" />
             <ListView x:Name="List"
                       Background="Transparent" BorderThickness="0"
                       Foreground="#E2E6EE"
@@ -793,9 +925,12 @@
                     </GridView>
                 </ListView.View>
             </ListView>
+        </Grid>
         </Border>
         </Grid>
 
     </DockPanel>
+    </Border>
+    </Border>
     </Border>
 </Window>

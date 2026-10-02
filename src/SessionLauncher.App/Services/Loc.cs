@@ -76,6 +76,7 @@ namespace SessionLauncher.App.Services
 
         public const string ProjSortBy = "proj.sortBy";
         public const string ProjHideMissing = "proj.hideMissing";
+        public const string ProjReloadTip = "proj.reloadTip";
         public const string ProjColName = "proj.colName";
         public const string ProjColLast = "proj.colLast";
         public const string ProjColVisits = "proj.colVisits";
@@ -226,6 +227,7 @@ namespace SessionLauncher.App.Services
                     [ViewProjects] = "项目",
                     [ProjSortBy] = "排序",
                     [ProjHideMissing] = "隐藏已删除",
+                    [ProjReloadTip] = "重新读取会话目录和 OpenChamber 的项目列表",
                     [ProjColName] = "项目",
                     [ProjColLast] = "最近使用",
                     [ProjColVisits] = "访问",
@@ -373,6 +375,7 @@ namespace SessionLauncher.App.Services
                     [ViewProjects] = "Projects",
                     [ProjSortBy] = "Sort",
                     [ProjHideMissing] = "Hide missing",
+                    [ProjReloadTip] = "Re-read the conversation catalog and OpenChamber's project list",
                     [ProjColName] = "Project",
                     [ProjColLast] = "Last used",
                     [ProjColVisits] = "Visits",
