@@ -204,11 +204,29 @@ minimised, closed or clicked; its four processes were only ever counted.
 | 8 | Unregistered project, OpenChamber running | tray-Quit instruction shown; 取消等待 button revealed; `settings.json` **byte-identical** |
 | 9 | Cancel | 已取消等待。 ; `settings.json` still byte-identical; button hidden |
 | 10 | Timeout | message shown; `settings.json` still byte-identical; button hidden |
+| 11 | Second click during a wait | the wait survives; the second press is refused with 已在等待…; shape unchanged |
 
-Steps 1–10 are automated and repeatable via `tools\test-catalog.mjs`,
-`tools\run-selftest.ps1` (331 assertions), `tools\verify-columns.ps1`,
+Steps 1–11 are automated and repeatable via `tools\test-catalog.mjs` (47 assertions),
+`tools\run-selftest.ps1` (344 assertions), `tools\verify-columns.ps1`,
 `tools\verify-scaling.ps1`, `tools\verify-deep-link.ps1` and
 `tools\verify-registration.ps1`.
+
+A whole-branch review afterwards found one Critical and three Important problems, all
+since fixed; the dispositions are in
+`.superpowers/sdd/2026-10-01-created-column-and-project-registration/progress.md` under
+`## Final review`. The two that changed observable behaviour most:
+
+- `WriteSettings` was doing `File.Delete` then `File.Move` under a comment claiming the
+  write was atomic on NTFS. Between those lines the user's entire OpenChamber
+  configuration did not exist. It predated this work, but this work made it reachable
+  from a button, so it is now `File.Replace`.
+- A second click during a wait disposed the live wait, and the disposed one's
+  continuation then ended the new one and reported a false timeout — after which
+  nothing registered when the user quit OpenChamber as instructed, and nothing said so.
+  It was reachable by merely selecting a different project row.
+
+Item 11 is the regression test for the second one: it was confirmed to fail against the
+pre-fix build and to pass against the fixed one.
 
 ### Not verified here
 
