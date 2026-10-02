@@ -301,10 +301,20 @@ public static class OpenChamberBridge
 
         // Newest first, by name. The stamp format sorts lexicographically, so this
         // needs no file timestamps and cannot reorder on a clock change.
-        foreach (var old in Directory
-                     .GetFiles(root, "settings-*.json")
-                     .OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase)
-                     .Skip(BackupKeepCount))
+        //
+        // The OLDEST is never pruned, however many writes follow it. That copy is the
+        // document as it was before this feature ever touched it, so it is the only
+        // one that can undo all of them at once — pruning it would eventually leave a
+        // backup set that could only roll forward.
+        var all = Directory
+            .GetFiles(root, "settings-*.json")
+            .OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var doomed = all.Skip(BackupKeepCount).ToList();
+        if (all.Count > 0) doomed.Remove(all[^1]);
+
+        foreach (var old in doomed)
         {
             // A backup someone has open is left alone; losing one is not fatal.
             try { File.Delete(old); }
@@ -502,15 +512,85 @@ public static class OpenChamberBridge
     }
 
     /// <summary>Write the settings document atomically.</summary>
+    /// <remarks>
+    /// <b>This was not atomic until it was changed to use <see cref="File.Replace"/>.</b>
+    /// It used to <c>File.Delete(path)</c> then <c>File.Move(temp, path)</c>, under a
+    /// comment claiming that replace was atomic on NTFS while never calling it. Between
+    /// those two lines the user's entire OpenChamber configuration does not exist: a
+    /// second instance, a scanner holding the temp file, or a crash in the window loses
+    /// it, and OpenChamber then starts on defaults.
+    /// <para>
+    /// <see cref="File.Replace"/> swaps the destination's contents in one filesystem
+    /// operation, so there is no window in which the file is missing. It throws when
+    /// the destination does not exist, which is why the two branches are separate —
+    /// the first write into a fresh profile has nothing to replace.
+    /// </para>
+    /// </remarks>
     private static void WriteSettings(string path, string content)
     {
         var temp = path + ".sessionlauncher.tmp";
         File.WriteAllText(temp, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        // Replace is atomic on NTFS and leaves no window where the file is missing.
-        // Delete first because File.Replace throws if the destination is absent.
-        if (File.Exists(path)) File.Delete(path);
-        File.Move(temp, path);
+        try
+        {
+            if (File.Exists(path))
+            {
+                // Replace preserves the destination's identity, which matters because
+                // another process may already hold a handle to it.
+                File.Replace(temp, path, destinationBackupFileName: null);
+            }
+            else
+            {
+                File.Move(temp, path);
+            }
+        }
+        catch
+        {
+            // Never leave the scratch file behind: it sits next to the real settings
+            // and a later run would trip over it.
+            try { if (File.Exists(temp)) File.Delete(temp); } catch (IOException) { }
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Put a backup back over the live settings file.
+    /// </summary>
+    /// <param name="backupPath">A file produced by <see cref="BackupSettings"/>.</param>
+    /// <param name="settingsPath">The live settings file to replace.</param>
+    /// <returns>
+    /// True when the file was restored. False — never an exception — when the backup
+    /// is missing, unreadable, or is not a settings document.
+    /// </returns>
+    /// <remarks>
+    /// This is what makes <see cref="BackupSettings"/> worth taking.
+    /// <see cref="VerifyRegistered"/> runs AFTER a write and can therefore only report
+    /// that something went wrong; without a restore step the backup is a file nobody
+    /// ever reads, and the detection buys nothing.
+    /// <para>
+    /// A backup that does not parse is refused rather than copied: the one moment this
+    /// is called is the moment the file is already broken, and overwriting it with
+    /// different rubbish helps nobody.
+    /// </para>
+    /// </remarks>
+    public static bool RestoreSettings(string backupPath, string settingsPath)
+    {
+        if (!File.Exists(backupPath)) return false;
+
+        string content;
+        try { content = File.ReadAllText(backupPath, Encoding.UTF8); }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+
+        if (CountTopLevelKeys(content) == 0) return false;
+
+        try
+        {
+            WriteSettings(settingsPath, content);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>
@@ -690,7 +770,46 @@ public static class OpenChamberBridge
         CheckEqual(3, reparsed.Count, "an appended project is seen on the next read");
         Check(reparsed.Any(p => p.Id == MakeId("F:\\a")), "the appended project is the one activated");
 
-        // ---- registration: IsRegistered, key counts, backup, verification ----
+        // ---- restoring, which is what makes the backup worth taking ----
+        //
+        // VerifyRegistered can DETECT a write that went wrong. It cannot undo one:
+        // it runs after the damage. Without a restore step the backup is a file
+        // nobody reads, and "we would have thrown" is a report, not a repair.
+        var rdir = Scratch("restore");
+        try
+        {
+            var settings = Path.Combine(rdir, "settings.json");
+            var pristine = doc;
+            File.WriteAllText(settings, pristine, new UTF8Encoding(false));
+
+            var saved = BackupSettings(settings, rdir);
+
+            // Corrupt it the way a bad write would.
+            File.WriteAllText(settings, """{"projects":[]}""", new UTF8Encoding(false));
+            Check(CountTopLevelKeys(File.ReadAllText(settings, Encoding.UTF8)) == 1,
+                  "the damaged document really is damaged");
+
+            var restored = RestoreSettings(saved, settings);
+            Check(restored, "RestoreSettings reports that it put something back");
+            CheckEqual(CountTopLevelKeys(pristine),
+                       CountTopLevelKeys(File.ReadAllText(settings, Encoding.UTF8)),
+                       "the restored document has the original's key count");
+            Check(pristine == File.ReadAllText(settings, Encoding.UTF8),
+                  "and is byte-for-byte the original");
+
+            // Restoring something that is not a settings document must be refused,
+            // not copied over a live file.
+            var junkBackup = Path.Combine(rdir, "settings-99999999-999999-999.json");
+            File.WriteAllText(junkBackup, "{ not json", new UTF8Encoding(false));
+            Check(!RestoreSettings(junkBackup, settings),
+                  "a backup that does not parse is refused rather than restored");
+            Check(pristine == File.ReadAllText(settings, Encoding.UTF8),
+                  "and the live document is left alone");
+
+            Check(!RestoreSettings(Path.Combine(rdir, "absent.json"), settings),
+                  "a missing backup reports failure rather than throwing");
+        }
+        finally { Clear(rdir); }
         //
         // Everything below writes into a scratch directory. The real settings.json
         // belongs to a live Electron process, and a self-test that touched it would
@@ -764,6 +883,17 @@ public static class OpenChamberBridge
 
             Check(ThrowsDataProblem(() => BackupSettings(Path.Combine(bdir, "nope.json"), bdir)),
                   "backing up a file that does not exist is rejected");
+
+            // The oldest backup is the one that matters. Pruning newest-first past
+            // it deletes the copy of the document as it was BEFORE this feature
+            // touched it, which is the only copy that can undo every write at once.
+            var oldest = Directory.GetFiles(bdir, "settings-*.json")
+                                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).First();
+            for (var i = 0; i < 20; i++) BackupSettings(source, bdir);
+            Check(File.Exists(oldest),
+                  "the oldest backup survives however many writes follow it");
+            Check(Directory.GetFiles(bdir, "settings-*.json").Length <= BackupKeepCount + 1,
+                  "and the directory still stays bounded");
         }
         finally { Clear(bdir); }
 

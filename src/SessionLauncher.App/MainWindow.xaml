@@ -593,19 +593,27 @@
         </Border>
 
         <!-- ================= status =================
-             A StackPanel, not a lone TextBlock, because the cancel control has to
-             live here and not in ProjectOpenRow: ApplyView collapses ProjectOpenRow
-             when the user switches to the session view, and a wait that becomes
-             uncancellable because someone glanced at another tab is a bug. The
-             status row is always on screen, so the escape hatch always is too. -->
-        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="2,8,0,0">
-            <TextBlock x:Name="StatusText" Style="{StaticResource Muted}"
+             A Grid, not a horizontal StackPanel. StatusText takes its desired width,
+             and the longest message this app produces is the one telling the user to
+             quit OpenChamber from its tray — over a hundred characters. In a
+             horizontal stack that runs the text past the window's right edge, where
+             it is clipped AND pushes the cancel button off with it. A star column
+             constrains the text so it ellipsises and the button always stays put.
+             The cancel control lives here rather than in ProjectOpenRow because
+             ApplyView collapses ProjectOpenRow on a view switch, and a wait that
+             becomes uncancellable because someone glanced at another tab is a bug. -->
+        <Grid DockPanel.Dock="Bottom" Margin="2,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText" Grid.Column="0" Style="{StaticResource Muted}"
                        TextTrimming="CharacterEllipsis" />
-            <Button x:Name="CancelWaitButton" Style="{StaticResource IconButton}"
+            <Button x:Name="CancelWaitButton" Grid.Column="1" Style="{StaticResource IconButton}"
                     Content="{markup:Tr act.cancelWait}" Margin="10,0,0,0"
                     Visibility="Collapsed"
                     Click="OnCancelRegistrationWaitClick" />
-        </StackPanel>
+        </Grid>
 
         <!-- ================= list (must stay last: it fills the DockPanel) ============ -->
         <!-- ================= the two views =================

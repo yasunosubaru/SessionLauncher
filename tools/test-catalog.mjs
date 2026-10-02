@@ -257,4 +257,56 @@ const MD_EIGHT = [
   checkEqual('ses_two', sr[0].id, 'the intact row is the one that survives');
 }
 
+// The generator's own guard against a junk timestamp is Number.isNaN on the
+// constructed Date, but `new Date(null)` is epoch zero, which is a perfectly
+// valid date. session_v2.time_created is nullable, so a row with no creation
+// time would be written as 1970-01-01 and the C# side would display it
+// cheerfully. Nothing may be written instead.
+{
+  const dir = scratch();
+  const previous = process.env.SESSIONLAUNCHER_CATALOG;
+  try {
+    const markdownPath = join(dir, 'TOP-LEVEL-SESSIONS.md');
+    process.env.SESSIONLAUNCHER_CATALOG = markdownPath;
+
+    const dbdir = join(dir, 'db');
+    mkdirSync(dbdir, { recursive: true });
+    const db = new DatabaseSync(join(dbdir, 'opencode.db'));
+    db.exec(`
+      CREATE TABLE session_v2 (
+        id TEXT PRIMARY KEY, title TEXT, directory TEXT, agent TEXT,
+        time_created INTEGER, time_updated INTEGER, parent_id TEXT);
+      CREATE TABLE session_message (session_id TEXT);
+    `);
+    const ins = db.prepare(
+      `INSERT INTO session_v2 (id,title,directory,agent,time_created,time_updated,parent_id)
+       VALUES (?,?,?,?,?,?,NULL)`);
+    ins.run('ses_ok', 'ok', 'F:/a', 'build', 1787136180000, 1788387540000);
+    ins.run('ses_null', 'no created', 'F:/a', 'build', null, 1788387540000);
+    ins.run('ses_junk', 'junk created', 'F:/a', 'build', 'not-a-number', 1788387540000);
+    db.close();
+
+    generate({ dbPath: join(dbdir, 'opencode.db') });
+
+    const text = readFileSync(markdownPath, 'utf8');
+    check(!text.includes('1970-01-01'),
+      'a NULL or unparseable time_created is written as an empty cell, not as 1970');
+    check(!text.includes('not-a-number'),
+      'and the raw value is never copied into the table');
+
+    const rows = text.split(/\r?\n/).filter((l) => l.startsWith('| ') && !l.startsWith('| ---'));
+    const cells = (row) => row.replaceAll('\\|', '\u0000').split('|').slice(1, -1).map((c) => c.trim());
+    const nullRow = rows.find((r) => r.includes('ses_null'));
+    const junkRow = rows.find((r) => r.includes('ses_junk'));
+    checkEqual('', cells(nullRow)[1], 'the NULL row leaves the created cell empty');
+    checkEqual('', cells(junkRow)[1], 'the junk row leaves the created cell empty');
+    checkEqual('2026-09-03 06:19', cells(nullRow)[2],
+      'and its updated cell is still real, because that one parsed');
+  } finally {
+    if (previous === undefined) delete process.env.SESSIONLAUNCHER_CATALOG;
+    else process.env.SESSIONLAUNCHER_CATALOG = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log(`test-catalog OK  assertions=${checks}`);

@@ -503,7 +503,13 @@ namespace SessionLauncher.App
                 ? Loc.Format(Loc.ProjOpened, project!.Path)
                 : Loc.T(Loc.TickHint);
 
-            ProjectOcButton.IsEnabled = has;
+            // Selecting a different project while a registration wait is running must NOT
+            // re-enable the open-set button. It did, and that reopened the door the
+            // wait had just closed: click a row, get told to quit OpenChamber, click
+            // another row, press the button again.
+            var waiting = _registrationWait is { IsWaiting: true };
+
+            ProjectOcButton.IsEnabled = has && !waiting;
             ProjectExplorerButton.IsEnabled = has;
             ProjectTerminalButton.IsEnabled = has;
             ProjectEditorButton.IsEnabled = has;
@@ -767,7 +773,14 @@ namespace SessionLauncher.App
 
         // ---- project view ------------------------------------------------------
 
-        /// <summary>Sort modes paired with their localised labels, in enum order.</summary>
+        /// <summary>
+        /// Sort modes paired with their localised labels, in COMBO order.
+        /// </summary>
+        /// <remarks>
+        /// Not enum order, deliberately. UnregisteredFirst leads the combo because it
+        /// is the order most people want on first run, while staying LAST in the enum
+        /// so the persisted integer for LastUsed keeps its meaning.
+        /// </remarks>
         private static readonly (ProjectSortMode Mode, string Key)[] ProjectSortModes =
         {
             // First in the combo, but NOT the app default: AppSettings.ProjectSort
@@ -1092,8 +1105,19 @@ namespace SessionLauncher.App
         /// and opening the project is what this button now does.
         /// </remarks>
         private void OnProjectDoubleClick(object sender, MouseButtonEventArgs e)
-            => Guard(() => OpenProjectSet(
-                SelectedProject() ?? throw new InvalidOperationException(Loc.T(Loc.ProjNoSelection))));
+            => Guard(() =>
+            {
+                // Double-click does not consult ProjectOcButton.IsEnabled, so it would
+                // otherwise be a way around the guard the wait installs.
+                if (_registrationWait is { IsWaiting: true })
+                {
+                    StatusText.Text = Loc.T(Loc.OcWaitAlreadyRunning);
+                    return;
+                }
+
+                OpenProjectSet(
+                    SelectedProject() ?? throw new InvalidOperationException(Loc.T(Loc.ProjNoSelection)));
+            });
 
         // These are wrapped in lambdas rather than passed as method groups: Guard takes
         // an Action, and OpenSelectedProject is a two-argument void method, so there is
@@ -1116,16 +1140,12 @@ namespace SessionLauncher.App
 
         // ---- OpenChamber: opening a SET of sessions ---------------------------
         //
-        // There is deliberately no code here that writes OpenChamber's settings.json
-        // any more. The previous version had a "select project" button whose only
-        // implementation was to add the project to OpenChamber's project list and
-        // rewrite its activeProjectId — a read-modify-write against a file a live
-        // Electron process owns, with no locking, doing File.Delete then File.Move.
-        // It is deleted rather than left dormant, because the whole point of the
-        // feature is now the deep link, which writes nothing at all.
-        //
-        // OpenChamberBridge keeps Activate() for the record and the tests, but nothing
-        // in the UI calls it.
+        // The previous "select project" button is gone, but its write path is not:
+        // RegisterAndLaunch calls OpenChamberBridge.Activate, which is the same
+        // read-modify-write against a file a live Electron process owns. What made it
+        // safe to keep is that it now runs only once OpenChamber is confirmed gone,
+        // it takes a backup first, and a write that fails verification is rolled back
+        // from that backup rather than merely reported.
 
         /// <summary>
         /// Open the ticked conversations in OpenChamber as one set.
@@ -1220,14 +1240,29 @@ namespace SessionLauncher.App
         /// Register a project in OpenChamber and start it on the result.
         /// </summary>
         /// <remarks>
-        /// Only reached once OpenChamber is known to be gone. Every step between the
-        /// backup and the relaunch can fail, and each failure mode is different: the
-        /// backup protects the file, <see cref="OpenChamberBridge.VerifyRegistered"/>
-        /// proves the write landed rather than merely not throwing, and the colour is
-        /// carried over so the project does not appear in OpenChamber with no accent.
+        /// Every step here can fail, and each failure mode is different:
+        /// <list type="bullet">
+        /// <item>The re-check below closes the window between deciding the project was
+        /// unregistered and writing the file. An updater restarting OpenChamber is
+        /// exactly that window, and it is the same hazard the two-consecutive-zeros
+        /// rule exists for.</item>
+        /// <item>The backup is taken before the write, not after.</item>
+        /// <item>A write that fails verification is <b>rolled back</b> from that backup.
+        /// Verification runs after the damage, so on its own it is a report and not a
+        /// repair; the restore is what makes the backup worth taking.</item>
+        /// </list>
         /// </remarks>
         private void RegisterAndLaunch(ProjectRow project)
         {
+            // Decided when the row was clicked, possibly minutes ago. An updater can
+            // have restarted OpenChamber in between, and writing then is the exact
+            // read-modify-write against a live process this whole path avoids.
+            if (LauncherService.IsOpenChamberRunning())
+            {
+                StatusText.Text = Loc.Format(Loc.OcRestartedWhileWaiting, project.Name);
+                return;
+            }
+
             var settings = OpenChamberBridge.ResolveSettingsPath()
                 ?? throw new FileNotFoundException(
                     "OpenChamber settings.json was not found; is OpenChamber installed?");
@@ -1238,10 +1273,29 @@ namespace SessionLauncher.App
             var before = OpenChamberBridge.CountTopLevelKeys(
                 File.ReadAllText(settings, Encoding.UTF8));
 
-            OpenChamberBridge.BackupSettings(settings);
+            // The specific file, not the directory: it is the state of the document as it
+            // was immediately before THIS write, which is what a rollback needs.
+            var backup = OpenChamberBridge.BackupSettings(settings);
 
-            var id = OpenChamberBridge.Activate(project.Path, project.Name, project.Entry.ColorKey);
-            OpenChamberBridge.VerifyRegistered(settings, id, before);
+            string id;
+            try
+            {
+                id = OpenChamberBridge.Activate(project.Path, project.Name, project.Entry.ColorKey);
+                OpenChamberBridge.VerifyRegistered(settings, id, before);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or IOException
+                                          or UnauthorizedAccessException)
+            {
+                // Put the file back. A write that failed verification has already
+                // replaced the user's settings, and reporting that is not the same as
+                // undoing it — the backup exists precisely for this moment.
+                var undone = OpenChamberBridge.RestoreSettings(backup, settings);
+
+                StatusText.Text = Loc.Format(
+                    undone ? Loc.OcRegisterRolledBack : Loc.OcRegisterFailed,
+                    project.Name, backup);
+                return;
+            }
 
             _launcher.OpenChamberApp();
             StatusText.Text = Loc.Format(Loc.OcRegisteredSet, project.Name, project.SessionCount);
@@ -1258,9 +1312,19 @@ namespace SessionLauncher.App
         /// </remarks>
         private void WaitForOpenChamberThenRegister(ProjectRow project)
         {
-            // A second click while one is already waiting replaces it rather than
-            // stacking two pollers on the same project.
-            EndRegistrationWait();
+            // Refuse a SECOND wait rather than replacing the first. Replacing it
+            // looked harmless and was not: disposing the old wait resumes its
+            // continuation, which posts to the dispatcher and runs AFTER this handler
+            // returns — by which time the new wait exists. The stale callback then
+            // ended the NEW wait and reported a timeout for a wait that had not
+            // timed out, and nothing then registered when the user did what they were
+            // told. One wait at a time, and re-entry is refused.
+            if (_registrationWait is { IsWaiting: true })
+            {
+                StatusText.Text = Loc.T(Loc.OcWaitAlreadyRunning);
+                return;
+            }
+
             _registrationWaitCancelled = false;
 
             var wait = new ProjectRegistrationWait(
@@ -1285,6 +1349,11 @@ namespace SessionLauncher.App
                         // Closed while waiting: the user cannot see a registration
                         // happen, so do not perform one behind their back.
                         if (_closing) return;
+
+                        // Only tear down a wait that is still OURS. Without this a
+                        // superseded callback would end whatever wait has since taken
+                        // its place.
+                        if (!ReferenceEquals(_registrationWait, wait)) return;
 
                         EndRegistrationWait();
 

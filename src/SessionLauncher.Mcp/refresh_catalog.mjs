@@ -35,10 +35,19 @@ const TITLE_LINE = '# TOP-LEVEL-SESSIONS';
 
 /**
  * Format epoch milliseconds as 'YYYY-MM-DD HH:MM' in LOCAL time.
- * @param {number} epochMs
+ *
+ * Returns '' for anything that is not a real instant. The check has to be for
+ * null/undefined/NaN as a NUMBER, not for NaN on the constructed Date:
+ * `new Date(null)` is epoch zero, which is a perfectly valid Date and formats as
+ * 1970-01-01. session_v2.time_created is nullable, so without this a session with
+ * no creation time is written as 1970 and the GUI displays it as fact.
+ *
+ * @param {number|null|undefined} epochMs
  * @returns {string}
  */
 function formatLocal(epochMs) {
+  if (epochMs === null || epochMs === undefined) return '';
+  if (typeof epochMs !== 'number' || !Number.isFinite(epochMs)) return '';
   const d = new Date(epochMs);
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n) => String(n).padStart(2, '0');

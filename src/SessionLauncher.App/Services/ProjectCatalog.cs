@@ -90,10 +90,19 @@ public sealed class ProjectEntry
     /// <para>
     /// Computed rather than stored: the session list is the only source, and it is
     /// replaced wholesale every time the catalog reloads.
+    /// <para>
+    /// Sessions with no creation time are EXCLUDED rather than counted as the
+    /// earliest. A catalog can mix dated and undated rows — a NULL time_created, or a
+    /// hand-edit — and treating the gaps as the year one would make a single missing
+    /// value report the whole project as having no creation date, discarding forty real
+    /// dates because of one gap.
     /// </para>
     /// </remarks>
     public DateTimeOffset Created =>
-        Sessions.Count > 0 ? Sessions.Min(s => s.Created) : DateTimeOffset.MinValue;
+        Sessions.Where(s => s.Created != DateTimeOffset.MinValue)
+                .Select(s => s.Created)
+                .DefaultIfEmpty(DateTimeOffset.MinValue)
+                .Min();
 
     /// <summary>Distinct agents that have worked in this project.</summary>
     public int AgentCount =>
@@ -487,6 +496,22 @@ public static class ProjectCatalog
         });
         CheckEqual(DateTimeOffset.MinValue, undated[0].Created,
                    "a project whose sessions have no creation time reports none");
+
+        // One undated session must not hide the rest. A catalog with a NULL
+        // time_created, or a hand-edited one, can mix dated and undated rows in the
+        // same project; reporting an em dash then would discard 40 real dates
+        // because of one gap.
+        var mostlyDated = ProjectCatalog.Group(new List<SessionInfo>
+        {
+            new SessionInfo("ses_d1", "d1", "F:/mixed", "build", t0.AddDays(9), 1,
+                "F:\\mixed", "F:/mixed") { Created = t0.AddDays(1) },
+            new SessionInfo("ses_d2", "d2", "F:/mixed", "build", t0.AddDays(8), 1,
+                "F:\\mixed", "F:/mixed") { Created = t0.AddDays(2) },
+            new SessionInfo("ses_nd", "nd", "F:/mixed", "build", t0.AddDays(7), 1,
+                "F:\\mixed", "F:/mixed"),          // no Created: MinValue
+        });
+        CheckEqual(t0.AddDays(1), mostlyDated[0].Created,
+                   "one undated session does not hide the project's real creation date");
 
         // Ordering of the project list itself.
         var ordered = ProjectCatalog.Group(sessions);

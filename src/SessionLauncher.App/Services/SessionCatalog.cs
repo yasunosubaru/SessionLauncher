@@ -393,6 +393,22 @@ namespace SessionLauncher.App.Services
             CheckEqual("the title", rev[0].Title, "a reordered header does not swap title for directory");
             CheckEqual(@"F:\a\b", rev[0].ProjectPath, "a reordered header does not swap directory for title");
 
+            // A layout where the id sits at index 1 rather than last. This is the shape a
+            // name-based parser exists to support, and it also settles whether the
+            // row-width guard is a guard or a bug: that guard counts how many CELLS
+            // a row has, not where the id sits, so a 7-cell row clears it whatever
+            // its column order.
+            var idFirst = new[]
+            {
+                "| # | session id | updated | msgs | agent | title | directory |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+                "| 1 | `ses_early` | 2026-10-01 17:39 | 5 | build | the title | `F:/a/b` |",
+            };
+            var re = SessionCatalog.LoadFromLines(idFirst, "id-first");
+            CheckEqual(1, re.Count, "a layout with the id in the second column parses");
+            CheckEqual("ses_early", re[0].Id, "and the id is read from there");
+            CheckEqual(@"F:\a\b", re[0].ProjectPath, "with the directory still correct");
+
             // ---- rejections ----
             Throws(() => SessionCatalog.LoadFromLines(
                     new[] { "# x", "", "| foo | bar |", "| --- | --- |", "| 1 | 2 |" }, "junk"),

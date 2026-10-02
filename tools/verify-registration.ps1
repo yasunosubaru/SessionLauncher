@@ -9,7 +9,10 @@ param(
     # Skip the cancel click so the wait runs to its timeout instead.
     [switch]$SkipCancel,
     # How long to watch for the timeout message before giving up.
-    [int]$TimeoutWatchSeconds = 20
+    [int]$TimeoutWatchSeconds = 20,
+    # After starting the wait, interfere with it: select another row and press the
+    # open-set button again. Both used to destroy the live wait.
+    [switch]$SecondClick
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,7 +22,27 @@ Add-Type -AssemblyName UIAutomationTypes
 $settings = "$env:USERPROFILE\.config\openchamber\settings.json"
 $exe = '<repo>\apps\SessionLauncher\src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
 
-function Hash-Of($path) { (Get-FileHash $path -Algorithm SHA256).Hash }
+# A byte hash is NOT a valid check here. OpenChamber is RUNNING during this test
+# and saves its own state whenever it likes, so a hash comparison can fail for
+# reasons that have nothing to do with the launcher -- and a byte-for-byte match
+# would be luck rather than evidence. Compare the document's SHAPE instead, the
+# way verify-deep-link.ps1 does: same projects, same top-level keys.
+#
+# What this test is really asserting is already visible without any of it: an
+# unregistered project clicked while OpenChamber runs produces the tray-Quit
+# message and a cancel button, and neither of those paths writes.
+function Get-Shape($path) {
+    $j = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    [pscustomobject]@{
+        Keys     = @($j.PSObject.Properties).Count
+        Projects = @($j.projects).Count
+        Paths    = (@($j.projects) | ForEach-Object { $_.path } | Sort-Object)
+    }
+}
+function Same-Shape($a, $b) {
+    ($a.Keys -eq $b.Keys) -and ($a.Projects -eq $b.Projects) `
+        -and ((Compare-Object $a.Paths $b.Paths) -eq $null)
+}
 
 Get-Process SessionLauncher -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill(); $_.WaitForExit(5000) } | Out-Null
 
@@ -82,17 +105,28 @@ $items = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
 Write-Host "project rows on screen: $($items.Count)"
 if ($items.Count -eq 0) { throw "no project rows" }
 
-# Row 0 under the default sort is the most recently used project. Its mark tells
-# us whether it is registered; either kind is a valid thing to click, and the two
-# produce deliberately different behaviour.
-$target = $items[0]
-$sel = $target.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
-$sel.Select()
+# Pick a row that is explicitly UNREGISTERED (hollow mark). Clicking row 0 and
+# hoping is not a test: which of the three dispatch branches runs depends on the
+# sort order, and the wait branch is the one this script is about.
+$hollow = [char]0x25CB
+$target = $null; $targetName = $null
+foreach ($row in $items) {
+    $names = @($row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Text))) |
+        ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+    if ($names.Count -gt 1 -and $names[0] -eq $hollow) {
+        $target = $row; $targetName = $names[1]; break
+    }
+}
+if (-not $target) { throw "no unregistered (hollow-mark) project row found" }
+Write-Host "target UNREGISTERED project: $targetName"
+$target.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() | Out-Null
 Start-Sleep -Milliseconds 800
-Write-Host "selected row 0"
 
-$before = Hash-Of $settings
-Write-Host "settings hash before: $before"
+$before = Get-Shape $settings
+Write-Host "settings before: keys=$($before.Keys) projects=$($before.Projects)"
 
 $label = '打开整套会话'
 $btn = Find-Text $label
@@ -115,9 +149,60 @@ $cancel = Find-Text '取消等待'
 if (-not $cancel) { $cancel = Find-Text 'Cancel wait' }
 Write-Host ("  cancel button visible: {0}" -f [bool]$cancel)
 
-$after = Hash-Of $settings
-Write-Host "  settings hash after:  $after"
-Write-Host ("  settings UNCHANGED:   {0}" -f ($before -eq $after))
+$after = Get-Shape $settings
+Write-Host "  settings after:  keys=$($after.Keys) projects=$($after.Projects)"
+Write-Host ("  settings UNCHANGED:   {0}" -f (Same-Shape $before $after))
+
+if ($SecondClick) {
+    Write-Host ""
+    Write-Host "== interfering: select another row, then press the button again =="
+    # Selecting a different row used to re-enable ProjectOcButton, and the second
+    # press used to dispose the live wait and then report a timeout for it. The
+    # wait must survive both.
+    $other = $null
+    foreach ($row in $items) {
+        if (-not [object]::ReferenceEquals($row, $target)) { $other = $row; break }
+    }
+    if ($other) {
+        $other.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() | Out-Null
+        Start-Sleep -Milliseconds 900
+        Write-Host "  selected a different row"
+    }
+
+    $btn2 = Find-Text '打开整套会话'
+    if ($btn2) { Invoke-Ancestor $btn2 | Out-Null; Start-Sleep -Milliseconds 1500 }
+
+    $cancel2 = Find-Text '取消等待'
+    if (-not $cancel2) { $cancel2 = Find-Text 'Cancel wait' }
+    Write-Host ("  cancel button still visible: {0}   (expected True)" -f [bool]$cancel2)
+
+    $stillWaiting = $false
+    foreach ($t in (Get-Texts)) {
+        if (-not (On-Screen $t)) { continue }
+        if ($t.Current.Name -match 'Quit|退出' -and $t.Current.Name -notmatch '超时|timed out') {
+            $stillWaiting = $true
+        }
+        if ($t.Current.Name -match '已在等待|already waiting') { $stillWaiting = $true }
+    }
+    Write-Host ("  wait still in progress:       {0}   (expected True)" -f $stillWaiting)
+
+    # What the status line actually says: read the bottom strip of the window, where
+    # StatusText and the cancel button live. A boolean that comes back False needs
+    # the reason next to it, not just the fact.
+    Write-Host "  --- bottom strip of the window ---"
+    foreach ($t in (Get-Texts)) {
+        if (-not (On-Screen $t)) { continue }
+        $r = $t.Current.BoundingRectangle
+        if ($r.Y -lt ($win.Y + $win.Height - 140)) { continue }
+        Write-Host ("    > [{0}] '{1}'" -f $r.X, $t.Current.Name)
+    }
+    Write-Host "  -----------------------------------------------"
+    if (-not $cancel2 -or -not $stillWaiting) {
+        Write-Host "  [FAIL] the second click killed the live wait"
+    } else {
+        Write-Host "  [ok]   the second click was refused and the wait survived"
+    }
+}
 
 if ($SkipCancel) {
     Write-Host ""
@@ -137,9 +222,9 @@ if ($SkipCancel) {
     }
     if (-not $timedOut) { Write-Host "  [FAIL] no timeout message within $TimeoutWatchSeconds s" }
 
-    $final = Hash-Of $settings
-    Write-Host "  settings hash after timeout: $final"
-    Write-Host ("  settings UNCHANGED:          {0}" -f ($final -eq $before))
+    $final = Get-Shape $settings
+    Write-Host "  settings after timeout: keys=$($final.Keys) projects=$($final.Projects)"
+    Write-Host ("  settings UNCHANGED:          {0}" -f (Same-Shape $before $final))
 
     $cancelStill = Find-Text '取消等待'
     if (-not $cancelStill) { $cancelStill = Find-Text 'Cancel wait' }
@@ -150,9 +235,9 @@ elseif ($cancel) {
     Write-Host "== cancelling =="
     Invoke-Ancestor $cancel | Out-Null
     Start-Sleep -Milliseconds 1500
-    $final = Hash-Of $settings
-    Write-Host "  settings hash after cancel: $final"
-    Write-Host ("  settings UNCHANGED:         {0}" -f ($final -eq $before))
+    $final = Get-Shape $settings
+    Write-Host "  settings after cancel: keys=$($final.Keys) projects=$($final.Projects)"
+    Write-Host ("  settings UNCHANGED:         {0}" -f (Same-Shape $before $final))
     foreach ($t in (Get-Texts)) {
         if (-not (On-Screen $t)) { continue }
         if ($t.Current.Name -match '取消|超时|Cancelled|timed out') { Write-Host "  final status: $($t.Current.Name)" }

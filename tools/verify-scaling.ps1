@@ -64,7 +64,10 @@ function Rows {
 # A cell showing a full timestamp has 16 characters: "2026-10-01 17:39".
 $stamp = '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$'
 function Measure-Stamps($label) {
-    $bad = 0; $good = 0; $samples = @()
+    # $bad counts TRUNCATION only. An em dash is the correct rendering for a catalog
+    # that carries no creation times at all, so counting it as a failure would report
+    # exactly the stale-catalog case as broken.
+    $bad = 0; $good = 0; $undated = 0; $samples = @()
     foreach ($row in (Rows)) {
         foreach ($t in $row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                 (New-Object System.Windows.Automation.PropertyCondition(
@@ -72,13 +75,15 @@ function Measure-Stamps($label) {
                     [System.Windows.Automation.ControlType]::Text)))) {
             $n = $t.Current.Name
             if (-not $n) { continue }
-            if ($n -eq ([char]0x2014)) { $bad++; continue }         # an em dash: no timestamp
+            if ($n -eq ([char]0x2014)) { $undated++; continue }
             if ($n -match '^\d{4}-\d{2}-\d{2}') {
-                if ($n -match $stamp) { $good++ } else { $bad++; if ($samples.Count -lt 4) { $samples += $n } }
+                if ($n -match $stamp) { $good++ }
+                else { $bad++; if ($samples.Count -lt 4) { $samples += $n } }
             }
         }
     }
-    Write-Host ("  {0}: complete={1} truncated-or-missing={2} {3}" -f $label, $good, $bad, ($samples -join ' '))
+    Write-Host ("  {0}: complete={1} truncated={2} undated(dash)={3} {4}" -f `
+                $label, $good, $bad, $undated, ($samples -join ' '))
     return $bad
 }
 
@@ -106,10 +111,10 @@ Write-Host "  font now: $pct"
 $bad1 = Measure-Stamps 'large'
 
 Write-Host ""
-Write-Host ("  truncation appeared only at the large size: {0}" -f ($bad0 -eq 0 -and $bad1 -ge 0))
-if ($bad0 -gt 0) { Write-Host "  [note] $bad0 incomplete cell(s) even at the default size" }
-if ($bad1 -gt 0) { Write-Host "  [FAIL] $bad1 cell(s) truncated at the large size" }
-else { Write-Host "  [ok]   no truncated timestamp at the large size" }
+Write-Host "  verdict:"
+if ($bad0 -eq 0 -and $bad1 -eq 0) { Write-Host "    [ok]   no truncated timestamp at either size" }
+elseif ($bad0 -gt 0) { Write-Host "    [FAIL] $bad0 cell(s) already truncated at the default size — the column is too narrow at 100%" }
+else { Write-Host "    [FAIL] $bad1 cell(s) truncated at the large size — the column does not follow the font" }
 
 $p.CloseMainWindow() | Out-Null; $p.WaitForExit(8000) | Out-Null
 Write-Host ""

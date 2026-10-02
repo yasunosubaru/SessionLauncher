@@ -31,6 +31,23 @@ Canonical location, shared by both halves:
 <catalog dir>\TOP-LEVEL-SESSIONS.md
 ```
 
+The table has eight columns:
+
+```
+| # | created | updated | msgs | agent | directory | title | session id |
+```
+
+**Columns are matched by name, never by position**, in all three readers —
+`refresh_catalog.mjs`, `SessionCatalog.cs` and `lib/catalog.mjs`. Two layouts are in
+circulation: the eight above and the older seven without `created`. A catalog
+generated before the column existed still parses, with no creation time rather than
+with no rows, because `created` is the one column a header is allowed to be missing.
+
+> **Never edit this file by hand, and never change its layout in one reader only.**
+> The MCP server and the GUI read the same artifact. A positional reader of a file
+> it did not write breaks the moment the file is regenerated — and breaks the other
+> reader too, because they share it.
+
 Fallback order (first hit wins), implemented identically in
 `SessionCatalog.ProbeCandidatePaths` and `lib/catalog.mjs`:
 
@@ -66,10 +83,12 @@ src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe
 - **Open in OpenChamber** (default; Enter or double-click)
 - **Open in opencode** — `opencode -s <id>`, one window per selected conversation
 - **Copy ids** — every selected session id, one per line
+- **Creation time** — both lists show when a conversation, and when a project, came
+  into being, in place of the session id and the colour column
 - **Project / workspace** — Explorer, terminal, editor, or a project-rooted `opencode` TUI
 - **Language toggle** — `EN` / `中` switches the whole window
-- **Project view** — every project opencode has worked in, read from its own logs,
-  with nine sort orders
+- **Project view** — every project the catalog groups conversations into, with ten sort
+  orders and a `●`/`○` mark for whether OpenChamber already lists it
 
 ### Project view
 
@@ -84,6 +103,42 @@ scraping opencode's logs. An earlier revision read
 them long dead, which is not what a project list is. Grouping the 141 catalog sessions
 gives 40 projects, each with its sessions attached — which is what "open a project"
 actually needs, because opening it means opening those sessions.
+
+#### Opening a project in OpenChamber
+
+Clicking 打开整套会话 (or double-clicking the row) dispatches on two facts — whether
+OpenChamber already lists the project, and whether it is running:
+
+| Project | OpenChamber | What happens |
+|---|---|---|
+| ● registered | either | **One deep link**, nothing written. OpenChamber resolves the session's project, switches to it, and its sidebar shows that project with every conversation beneath it. |
+| ○ unregistered | not running | Back up `settings.json` → add the project and set it active → verify → start OpenChamber. |
+| ○ unregistered | running | **Wait.** The status line says to quit OpenChamber from its tray; once it exits, the row above runs automatically. 取消等待 gives up. |
+
+The `●` / `○` column is the first one in the project list. It is read from
+OpenChamber's own `settings.json` (`projects[]`), which the launcher only ever reads
+while merely listing. A project you have never added is hollow; one OpenChamber
+already knows is filled.
+
+**Closing OpenChamber's window is not enough.** Its close handler hides the window to
+the tray and the process survives (`main.mjs:2193`), so the wait keeps polling. You
+have to use the **tray icon → Quit**, which asks for confirmation. The launcher never
+moves, resizes, topmosts, minimises, closes or clicks OpenChamber's window; it only
+counts its processes.
+
+The write itself is guarded three ways, because `settings.json` belongs to a running
+Electron process with no locking:
+
+- an exit is **two consecutive zero** process samples, so an updater restart cannot be
+  mistaken for an exit and written into
+- `OpenChamberBridge.Activate` re-checks that OpenChamber is still gone immediately
+  before writing, since the decision was made when the row was clicked
+- a write that fails verification is **rolled back from the backup taken one line
+  earlier**, not merely reported
+
+Backups live in `%LOCALAPPDATA%\SessionLauncher\backups\`. The newest ten are kept and
+the oldest is kept unconditionally — it is the one copy that predates every write this
+feature has made, so it is the only one that can undo all of them at once.
 
 #### One grouping rule, and why
 

@@ -21,7 +21,7 @@ function Read-Shape($path) {
     $j = $raw | ConvertFrom-Json
     [pscustomobject]@{
         Keys        = @($j.PSObject.Properties).Count
-        Projects    = @($j.projects).Count
+        Projects    = @($j.projects)
         Paths       = (@($j.projects) | ForEach-Object { $_.path } | Sort-Object)
         ActiveId    = $j.activeProjectId
         Raw         = $raw
@@ -79,33 +79,35 @@ $rows = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::DataItem)))
 
-# Find a row whose first cell is the filled mark: that is a registered project.
+# Find a row whose first cell is the filled mark — a project OpenChamber already
+# lists. It must NOT be the one already active, or there is nowhere for the deep
+# link to move to and "activeProjectId changed" asserts nothing.
+$before0 = Read-Shape $settings
+$activePath = $null
+foreach ($proj in $before0.Projects) {
+    if ($proj.id -eq $before0.ActiveId) { $activePath = $proj.path }
+}
+Write-Host "currently active project: $activePath"
+
 $filled = [char]0x25CF
 $target = $null; $targetName = $null
 foreach ($row in $rows) {
-    $first = $null
-    foreach ($t in $row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-            (New-Object System.Windows.Automation.PropertyCondition(
-                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-                [System.Windows.Automation.ControlType]::Text)))) {
-        if ($t.Current.Name) { $first = $t.Current.Name; break }
-    }
-    if ($first -eq $filled) {
-        $names = @($row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+    $names = @($row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
             (New-Object System.Windows.Automation.PropertyCondition(
                 [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
                 [System.Windows.Automation.ControlType]::Text))) |
-            ForEach-Object { $_.Current.Name } | Where-Object { $_ })
-        $targetName = $names[1]
-        $target = $row
-        break
-    }
+        ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+    if ($names.Count -lt 2 -or $names[0] -ne $filled) { continue }
+    # The row's LAST cell is the project path (proj.colPath); names[1] is the
+    # label, which is not what activeProjectId stores.
+    if ($names[-1] -eq $activePath) { continue }
+    $targetName = "$($names[1]) ($($names[-1]))"; $target = $row; break
 }
-if (-not $target) { throw "no registered (filled-mark) project row found" }
+if (-not $target) { throw "no registered (filled-mark) project other than the active one" }
 Write-Host "target registered project: $targetName"
 
 $before = Read-Shape $settings
-Write-Host "before: keys=$($before.Keys) projects=$($before.Projects) active=$($before.ActiveId)"
+Write-Host "before: keys=$($before.Keys) projects=$(@($before.Projects).Count) active=$($before.ActiveId)"
 
 $target.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() | Out-Null
 Start-Sleep -Milliseconds 700
@@ -116,10 +118,10 @@ Invoke-Ancestor $btn | Out-Null
 Start-Sleep -Seconds 3
 
 $after = Read-Shape $settings
-Write-Host "after:  keys=$($after.Keys) projects=$($after.Projects) active=$($after.ActiveId)"
+Write-Host "after:  keys=$($after.Keys) projects=$(@($after.Projects).Count) active=$($after.ActiveId)"
 Write-Host ""
 Write-Host ("  top-level keys unchanged : {0}  ({1} -> {2})" -f ($after.Keys -eq $before.Keys), $before.Keys, $after.Keys)
-Write-Host ("  project count unchanged  : {0}  ({1} -> {2})" -f ($after.Projects -eq $before.Projects), $before.Projects, $after.Projects)
+Write-Host ("  project count unchanged  : {0}  ({1} -> {2})" -f (@($after.Projects).Count -eq @($before.Projects).Count), @($before.Projects).Count, @($after.Projects).Count)
 Write-Host ("  project set unchanged    : {0}" -f ((Compare-Object $before.Paths $after.Paths) -eq $null))
 Write-Host ("  activeProjectId moved    : {0}  {1}" -f ($after.ActiveId -ne $before.ActiveId),
     $(if ($after.ActiveId -eq $before.ActiveId) { '(no change — the deep link did not switch projects)' } else { '' }))
