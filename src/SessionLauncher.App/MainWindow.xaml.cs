@@ -1302,13 +1302,21 @@ namespace SessionLauncher.App
         }
 
         /// <summary>
-        /// Ask the user to quit OpenChamber, then register and relaunch once it has.
+        /// Register the project as soon as OpenChamber is gone, without being asked again.
         /// </summary>
         /// <remarks>
-        /// Closing OpenChamber's window is NOT enough and the message says so. Its
-        /// close handler hides the window to the tray and the process survives
-        /// (main.mjs:2193), so a user who closes the window would otherwise sit here
-        /// until the timeout with no idea why nothing was happening.
+        /// There is NO deadline here, by design. The user closes OpenChamber whenever
+        /// they get round to it — possibly hours later — and everything happens after
+        /// that on its own. The previous five-minute timeout meant the wait expired
+        /// while they were away and then obliged them to come back and click a second
+        /// time, which is the "go and do something now" this is meant not to be.
+        /// <para>
+        /// The status line states what will happen and says explicitly that nothing is
+        /// required of the user. It does keep one factual note, because without it the
+        /// feature looks broken: closing OpenChamber's window only hides it to the tray
+        /// and the process survives (<c>main.mjs:2193</c>), so a user who closes the
+        /// window would otherwise sit here indefinitely with no explanation.
+        /// </para>
         /// </remarks>
         private void WaitForOpenChamberThenRegister(ProjectRow project)
         {

@@ -91,11 +91,20 @@ public sealed class ProjectRegistrationWait : IDisposable
     public static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(700);
 
     /// <summary>
-    /// How long to wait before giving up. Long, because the user has to find a
-    /// tray icon, right-click it and confirm a dialog, and a short timeout would
-    /// expire while they are still deciding.
+    /// How long to wait before giving up.
     /// </summary>
-    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
+    /// <remarks>
+    /// INFINITE by default, and that is the feature rather than a missing setting.
+    /// The user is expected to quit OpenChamber whenever they get round to it —
+    /// possibly hours later. A finite timeout would expire while they were away and
+    /// oblige them to come back and click a second time, which is precisely the
+    /// "please go and do something now" this is meant not to be.
+    /// <para>
+    /// Nothing is leaked by waiting forever: the loop is a timer, not a thread, and
+    /// <see cref="Dispose"/> stops it.
+    /// </para>
+    /// </remarks>
+    public static readonly TimeSpan DefaultTimeout = Timeout.InfiniteTimeSpan;
 
     /// <summary>
     /// How many zero samples in a row count as an exit.
@@ -182,7 +191,12 @@ public sealed class ProjectRegistrationWait : IDisposable
                     consecutiveZeros = 0;
                 }
 
-                if (clock.Elapsed >= _timeout) return false;
+                // TimeSpan cannot represent "never", so an infinite deadline is carried as
+                // Timeout.InfiniteTimeSpan, which is NEGATIVE one millisecond. Left
+                // unguarded, `elapsed >= that` is true immediately and the wait would
+                // expire before its first poll — the opposite of what it asks for.
+                if (_timeout != Timeout.InfiniteTimeSpan && clock.Elapsed >= _timeout)
+                    return false;
 
                 try
                 {
@@ -344,8 +358,26 @@ public sealed class ProjectRegistrationWait : IDisposable
         {
             Check(ProjectRegistrationWait.DefaultPollInterval == TimeSpan.FromMilliseconds(700),
                   "the poll interval is 700 ms");
-            Check(ProjectRegistrationWait.DefaultTimeout == TimeSpan.FromMinutes(5),
-                  "the timeout is five minutes");
+
+            // No deadline. The whole point is that the user quits OpenChamber
+            // whenever they get round to it and everything happens afterwards; a
+            // timeout would expire while they are at lunch and then oblige them to
+            // come back and click again.
+            Check(ProjectRegistrationWait.DefaultTimeout == Timeout.InfiniteTimeSpan,
+                  "the default wait never gives up");
+
+            // Which has to be more than a constant change. A delegate that stays
+            // non-zero for 300 polls and then goes to zero must still resolve TRUE.
+            // Any finite default measured in tens of milliseconds would have given
+            // up long before poll 300, which is exactly the behaviour being removed.
+            var stubborn = 0;
+            using var patient = new ProjectRegistrationWait(
+                TimeSpan.FromMilliseconds(1), Timeout.InfiniteTimeSpan,
+                () => (++stubborn < 300) ? 4 : 0);
+            Check(patient.WaitForExitAsync(CancellationToken.None).GetAwaiter().GetResult(),
+                  "a wait survives 300 non-zero samples and still reports the exit"
+                + $" (saw {stubborn} polls)");
+            Check(stubborn >= 300, "and it really did poll that many times");
         }
 
         // ---- the dispatch decision ----

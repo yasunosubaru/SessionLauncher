@@ -121,10 +121,15 @@ that need attention. Read-only.
 count is zero. A count of zero is the only reliable test: this machine has 4 processes
 and only one owns a window, and closing that window only hides it to the tray.
 
-- the status line names the exact action: quit from the **tray icon → Quit**, because
-  closing the window is not enough and the user will otherwise wait forever
+- the status line states what will happen and says explicitly that **nothing is required
+  of the user**. It keeps one factual note — that closing the window only hides to the
+  tray, so a real exit is the tray's **Quit** — because without it a user who closes the
+  window sees a feature that looks broken rather than idle
 - a 取消等待 button cancels
-- 5 minute timeout, then it stops and says so
+- **there is no timeout.** The user quits OpenChamber whenever they get round to it,
+  possibly hours later, and registration happens by itself afterwards. A deadline would
+  expire while they were away and oblige them to come back and press the button a second
+  time, which is the "go and do something now" this path exists to avoid
 - the window is never touched — no move, resize, topmost, minimise, or close
 
 **The write.** Once OpenChamber is gone:

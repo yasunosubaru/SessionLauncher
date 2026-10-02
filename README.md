@@ -113,18 +113,26 @@ OpenChamber already lists the project, and whether it is running:
 |---|---|---|
 | ● registered | either | **One deep link**, nothing written. OpenChamber resolves the session's project, switches to it, and its sidebar shows that project with every conversation beneath it. |
 | ○ unregistered | not running | Back up `settings.json` → add the project and set it active → verify → start OpenChamber. |
-| ○ unregistered | running | **Wait.** The status line says to quit OpenChamber from its tray; once it exits, the row above runs automatically. 取消等待 gives up. |
+| ○ unregistered | running | **Wait, indefinitely.** Nothing is required of you: the moment OpenChamber exits, the row above runs by itself. 取消等待 is there if you change your mind. |
 
 The `●` / `○` column is the first one in the project list. It is read from
 OpenChamber's own `settings.json` (`projects[]`), which the launcher only ever reads
 while merely listing. A project you have never added is hollow; one OpenChamber
 already knows is filled.
 
-**Closing OpenChamber's window is not enough.** Its close handler hides the window to
-the tray and the process survives (`main.mjs:2193`), so the wait keeps polling. You
-have to use the **tray icon → Quit**, which asks for confirmation. The launcher never
-moves, resizes, topmosts, minimises, closes or clicks OpenChamber's window; it only
-counts its processes.
+There is **no timeout** on that wait, and that is the design rather than a missing
+setting. You close OpenChamber whenever you get round to it — possibly hours later —
+and everything happens afterwards without a second click. A deadline would expire
+while you were away and then oblige you to come back and press the button again.
+
+**Closing OpenChamber's window is not enough, though**, and this is the one thing worth
+knowing. Its close handler hides the window to the tray and the process survives
+(`main.mjs:2193`), so closing the window leaves the wait running. To actually quit,
+use the **tray icon → Quit**, which asks for confirmation. The status line says so, as a
+note, not as an instruction.
+
+The launcher never moves, resizes, topmosts, minimises, closes or clicks OpenChamber's
+window; it only counts its processes, every 700 ms.
 
 The write itself is guarded three ways, because `settings.json` belongs to a running
 Electron process with no locking:
