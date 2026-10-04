@@ -14,7 +14,9 @@ Add-Type -AssemblyName UIAutomationTypes
 $env:PYTHONIOENCODING = 'utf-8'
 
 $settings = "$env:USERPROFILE\.config\openchamber\settings.json"
-$exe = '<repo>\apps\SessionLauncher\src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
+# Derived from this script's own location, so a clone anywhere works.
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$exe = Join-Path $repoRoot 'src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
 
 function Read-Shape($path) {
     $raw = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)

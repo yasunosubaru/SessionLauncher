@@ -38,14 +38,14 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: a working git repo at `<repo>\apps\SessionLauncher`, so every later task's "Commit" step is a real diff and a mistake is recoverable with `git checkout`.
+- Produces: a working git repo at `<repo>`, so every later task's "Commit" step is a real diff and a mistake is recoverable with `git checkout`.
 
 - [ ] **Step 1: Initialise the repository and commit the current tree**
 
 There is no VCS here. A source file was destroyed earlier in this project and had to be rebuilt by hand; that is what this step prevents recurring.
 
 ```powershell
-cd <repo>\apps\SessionLauncher
+cd <repo>
 git init
 ```
 
@@ -251,7 +251,7 @@ The file lives outside the repo and is shared with anything else that reads it, 
 $bk = "$env:LOCALAPPDATA\SessionLauncher\backups"
 New-Item -ItemType Directory -Force -Path $bk | Out-Null
 Copy-Item '<catalog dir>\TOP-LEVEL-SESSIONS.md' "$bk\TOP-LEVEL-SESSIONS.md.bak-7col"
-cd <repo>\apps\SessionLauncher\src\SessionLauncher.Mcp
+cd <repo>\src\SessionLauncher.Mcp
 node refresh_catalog.mjs
 ```
 
@@ -789,11 +789,11 @@ Set the font to 140 % with the existing in-app buttons. Read the 创建时间 co
 
 - [ ] **Step 3: Check the marks**
 
-In the project view, count the `●` and `○` rows. The four projects OpenChamber currently holds — sample, Developer, `C:\Users\demo`, capstone — must be `●`. Every other row must be `○`.
+In the project view, count the `●` and `○` rows. The four projects OpenChamber currently holds — 示例项目, Developer, `C:\Users\demo`, 综合实践 — must be `●`. Every other row must be `○`.
 
 - [ ] **Step 4: Check the registered path writes nothing**
 
-Hash `C:\Users\demo\.config\openchamber\settings.json`. Select the `●`-marked sample row, click the open-set button, wait, then re-hash. Assert the hash is **unchanged**. Read `activeProjectId` before and after and assert it changed to sample's id — that is OpenChamber switching projects on its own in response to the deep link, which is the whole mechanism.
+Hash `C:\Users\demo\.config\openchamber\settings.json`. Select the `●`-marked 示例项目 row, click the open-set button, wait, then re-hash. Assert the hash is **unchanged**. Read `activeProjectId` before and after and assert it changed to 示例项目's id — that is OpenChamber switching projects on its own in response to the deep link, which is the whole mechanism.
 
 - [ ] **Step 5: Check the wait and the cancel**
 

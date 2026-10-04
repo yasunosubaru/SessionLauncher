@@ -20,7 +20,9 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
 $settings = "$env:USERPROFILE\.config\openchamber\settings.json"
-$exe = '<repo>\apps\SessionLauncher\src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
+# Derived from this script's own location, so a clone anywhere works.
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$exe = Join-Path $repoRoot 'src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
 
 # A byte hash is NOT a valid check here. OpenChamber is RUNNING during this test
 # and saves its own state whenever it likes, so a hash comparison can fail for

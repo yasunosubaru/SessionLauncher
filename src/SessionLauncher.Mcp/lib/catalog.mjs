@@ -8,12 +8,12 @@
 // the same file. Do not duplicate the order anywhere else.
 //
 // Resolution order (first path that exists wins):
-//   1. <exeDir>/data/TOP-LEVEL-SESSIONS.md
-//   2. %LOCALAPPDATA%\SessionLauncher\TOP-LEVEL-SESSIONS.md
-//   3. <catalog dir>\TOP-LEVEL-SESSIONS.md
+//   1. %SESSIONLAUNCHER_CATALOG%                     (explicit override)
+//   2. <exeDir>/data/TOP-LEVEL-SESSIONS.md
+//   3. %LOCALAPPDATA%\SessionLauncher\TOP-LEVEL-SESSIONS.md
 //   4. <projectRoot>/data/TOP-LEVEL-SESSIONS.md
 //
-// Paths 1 and 4 are derived from this file's own location, so the layout is
+// Paths 2 and 4 are derived from this file's own location, so the layout is
 // assumed to be:
 //   <projectRoot>/src/SessionLauncher.Mcp/lib/catalog.mjs
 // where exeDir = <projectRoot>/src/SessionLauncher.Mcp and the project root is
@@ -39,8 +39,16 @@ const CATALOG_FILENAME = 'TOP-LEVEL-SESSIONS.md';
  * copy under <exeDir>/data is only a portable fallback: if the writer targeted it
  * while the reader preferred the canonical file, the two would silently drift
  * apart and show different session counts.
+ *
+ * It used to be a hardcoded absolute path on the author's machine — which made the
+ * published server point every other user at a directory that does not exist on
+ * their disk, and printed their volume layout in every error message. Per-user
+ * application data is the portable equivalent: one directory the current user can
+ * certainly write to.
  */
-const CANONICAL_CATALOG_PATH = '<catalog dir>\\' + CATALOG_FILENAME;
+const CANONICAL_CATALOG_PATH = process.env.LOCALAPPDATA
+  ? join(process.env.LOCALAPPDATA, 'SessionLauncher', CATALOG_FILENAME)
+  : join(projectRoot, 'data', CATALOG_FILENAME);
 
 /**
  * All candidate catalog paths, in resolution order. Entries may be null when the
@@ -48,11 +56,11 @@ const CANONICAL_CATALOG_PATH = '<catalog dir>\\' + CATALOG_FILENAME;
  * @returns {(string|null)[]}
  */
 export function catalogCandidatePaths() {
-  const localAppData = process.env.LOCALAPPDATA;
+  const override = process.env.SESSIONLAUNCHER_CATALOG;
   return [
+    override || null,
     CANONICAL_CATALOG_PATH,
     join(exeDir, 'data', CATALOG_FILENAME),
-    localAppData ? join(localAppData, 'SessionLauncher', CATALOG_FILENAME) : null,
     join(projectRoot, 'data', CATALOG_FILENAME),
   ];
 }
@@ -80,10 +88,10 @@ export function resolveCatalogPath() {
  * keep converging on one file. Falls back to the project data directory on a
  * machine without that volume.
  *
- * SESSIONLAUNCHER_CATALOG overrides everything. It exists for the test suite:
- * without it a call to generate() rewrites the live catalog that the GUI and this
- * server both read, so a failing test would destroy the very file it is asserting
- * about. Nothing sets it in normal operation.
+ * SESSIONLAUNCHER_CATALOG overrides everything. It is how a user points the tool
+ * at their own catalog, and it is also what the test suite sets: without it a
+ * call to generate() rewrites the live catalog that the GUI and this server both
+ * read, so a failing test would destroy the very file it is asserting about.
  * @returns {string}
  */
 export function resolveCatalogWritePath() {

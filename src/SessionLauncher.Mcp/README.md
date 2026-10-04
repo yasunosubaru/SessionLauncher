@@ -60,13 +60,14 @@ whose single argument is the absolute path to `server.mjs`.
 Defined once in `lib/catalog.mjs`; the WPF host must use the same order. First
 path that exists wins:
 
-1. `<exeDir>/data/TOP-LEVEL-SESSIONS.md`
+1. `%SESSIONLAUNCHER_CATALOG%`
 2. `%LOCALAPPDATA%\SessionLauncher\TOP-LEVEL-SESSIONS.md`
-3. `<catalog dir>\TOP-LEVEL-SESSIONS.md`
+3. `<exeDir>/data/TOP-LEVEL-SESSIONS.md`
 4. `<projectRoot>/data/TOP-LEVEL-SESSIONS.md`
 
 If none exist, the reader throws an error naming every path tried. The
-generator writes to the first existing path, else to (4).
+generator writes to `%SESSIONLAUNCHER_CATALOG%` when set, else to (2) if its
+directory exists, else to (4).
 
 ## Regenerating (`refresh_catalog.mjs`)
 
@@ -78,7 +79,7 @@ formats `time_updated` (epoch ms) as local `YYYY-MM-DD HH:MM`, escapes `|` as
 - `sessions.json` — `[{id,title,directory,agent,updated,msgs}]`, where
   `updated` is epoch ms and `msgs` is the count of `session_message` rows.
 
-Database: `C:\Users\demo\.local\share\opencode\opencode.db`, opened
+Database: `%USERPROFILE%\.local\share\opencode\opencode.db`, opened
 **read-only**. Override with env `SESSIONLAUNCHER_DB`.
 
 ## Environment variables

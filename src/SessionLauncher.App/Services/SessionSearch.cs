@@ -197,9 +197,7 @@ namespace SessionLauncher.App.Services
         /// quality first looks right and is wrong: a word-prefix hit in the directory
         /// (600 x 6 = 3600) then beats a substring hit in the title (400 x 10 = 4000), so a
         /// session whose title literally contains the query ranks below one that only
-        /// matched on its folder name. Observable on the real catalog: searching sample put
-        /// the title matches ses_4a1b2c3d and ses_9z8y7x6w below sessions whose titles
-        /// do not mention sample at all. Ties break on quality then field weight, so the
+        /// matched on its folder name. Ties break on quality then field weight, so the
         /// choice stays deterministic.
         /// </remarks>
         private static FieldMatch BestMatch(SearchDoc doc, string token)

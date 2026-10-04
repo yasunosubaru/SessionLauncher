@@ -14,8 +14,15 @@
 param(
     [Parameter(Mandatory = $true)][string] $Mine,
     [Parameter(Mandatory = $true)][string] $Theirs,
-    [string] $Catalog = '<catalog dir>\TOP-LEVEL-SESSIONS.md',
-    [string[]] $Queries = @('GNSS', 'sample', 'agent', 'docker', '修复', '建模', 'gnss sample', 'TE验证', 'SWARM')
+    # Resolve the catalog the same way the app does: an explicit override first,
+    # then the per-user default. No machine-specific path is baked in.
+    [string] $Catalog = $(if ($env:SESSIONLAUNCHER_CATALOG) { $env:SESSIONLAUNCHER_CATALOG }
+                         else { Join-Path $env:LOCALAPPDATA 'SessionLauncher\TOP-LEVEL-SESSIONS.md' }),
+    # Generic probe terms: ASCII, CJK, and the mixed/multi-token shapes the
+    # tokenizer has to get right. These were real queries against a real catalog
+    # once; they are not needed to exercise any of those shapes.
+    [string[]] $Queries = @('build', '笔记', 'agent', 'docker', '修复', 'report',
+                            'build 笔记', 'te', 'review')
 )
 
 $ErrorActionPreference = 'Stop'

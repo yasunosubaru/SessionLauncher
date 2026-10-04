@@ -154,9 +154,9 @@ public static class ProjectCatalog
     /// One rule, and it exists because of what the list looked like without it.
     /// <para>
     /// OpenChamber gives every conversation its own working directory:
-    /// <c>…\.config\openchamber\chats\2026-01-01\session-abc123-…</c>. The catalog
+    /// <c>…\.config\openchamber\chats\2026-01-01\session-…</c>. The catalog
     /// records that directory for the session, so grouping on it produced 25 rows named
-    /// <c>session-abc123-…</c>, each holding exactly one session, which buried the
+    /// <c>session-…</c>, each holding exactly one session, which buried the
     /// handful of directories a person would actually call a project. On this machine
     /// that was 25 of 58 rows.
     /// <para>

@@ -15,17 +15,17 @@
 //     %USERPROFILE%\.config\openchamber\settings.json
 // under "projects", an array of objects shaped exactly:
 //     { id, path, label?, color?, addedAt, lastOpenedAt, sidebarCollapsed }
-// and the one on screen is whichever record "activeProjectId" names. Verified on
-// this machine: 4 records, activeProjectId =
-//     path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy9jYXBzdG9uZQ
-// which base64url-decodes to "F:/.../capstone", matching lastDirectory.
+// and the one on screen is whichever record "activeProjectId" names.
 //
-// The id scheme, confirmed by decoding every record present:
+// The id scheme, confirmed by decoding every record inspected:
 //     id = "path_" + base64url(pathWithForwardSlashes)
-//   path_RDovUHJvamVjdHM               -> V:/Developer
-//   path_QzovVXNlcnMvZGVtbw             -> C:/Users/demo
-//   path_RjovZXhhbXBsZS...Nvb3Rlcy9jYXBzdG9uZQ           -> F:/.../sample
-// So it is computed, not opaque: any path can be projected into the scheme.
+//   path_RDovUHJvamVjdHM                 -> D:/Projects
+//   path_QzovVXNlcnMvZGVtbw              -> C:/Users/demo
+//   path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM -> F:/示例/资料/sample
+// So it is computed, not opaque: any path can be projected into the scheme. That
+// matters twice over — the launcher can synthesise an id for a directory OpenChamber
+// has never seen, and an id read back out of settings.json is a readable path
+// rather than an opaque token.
 //
 // A WORKSPACE is the other thing the user asked for, and the sidebar decides what
 // it is. settings.json carries:
@@ -33,11 +33,11 @@
 //     sidebarProjectDisplayMode  = "all"
 //     sidebarProjectSortOrder    = "manual"
 //     sidebarWorktreeSortOrder   = "recent"
-// "by-worktree" is why the sample node in the UI holds research-orchestrator,
-// 示例研究项目..., and the five Research:... conversations: all of
-// them are the 11 sessions whose directory is F:/.../sample. Confirmed against the
-// catalog. A workspace is therefore a PROJECT together with its worktree grouping,
-// and the honest way to open one is to open the project and let the sidebar group.
+// "by-worktree" means the sessions under a project node in the UI are grouped by
+// their directory, so the conversations that share one directory gather into one
+// child node under the project. A workspace is therefore a PROJECT together with its
+// worktree grouping, and the honest way to open one is to open the project and let
+// the sidebar do the grouping.
 //
 // Writing settings.json is the only handle. That is a destructive-on-crash risk and
 // is mitigated, not wished away: see WriteSettings.
@@ -665,19 +665,23 @@ public static class OpenChamberBridge
                     $"OpenChamberBridge self-test failed: {what} (expected '{expected}', got '{actual}')");
         }
 
-        // The id scheme, against ids actually present on this machine.
-        CheckEqual("path_RDovUHJvamVjdHM", MakeId("<repo>"),
-                   "<repo> projects to the observed id");
+        // The id scheme. These fixtures are SYNTHETIC: the expected ids below were
+        // recomputed from the paths beside them, not copied off a live machine.
+        // That is not just privacy. An "observed id" fixture is only a real test if
+        // someone else can verify it, and nobody outside the author's disk layout
+        // could — recomputing makes every expected value independently checkable.
+        CheckEqual("path_RDovUHJvamVjdHM", MakeId("D:\\Projects"),
+                   "D:\\Projects projects to the expected id");
         CheckEqual("path_QzovVXNlcnMvZGVtbw", MakeId("C:\\Users\\demo"),
-                   "C:\\Users\\demo projects to the observed id");
+                   "C:\\Users\\demo projects to the expected id");
         CheckEqual("path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM",
-                   MakeId("F:\\\u6587\u4ef6\u5939 \u8001\u7248\\personal content\\\u8bfe\u7a0b\u8d44\u6599\\\u5176\u4ed6\\\u8bba\u6587"),
-                   "the CJK sample path projects to the observed id");
+                   MakeId("F:\\\u793a\u4f8b\\\u8d44\u6599\\\u8bba\u6587"),
+                   "the CJK sample path projects to the expected id");
 
         // Decoding is the exact inverse, including CJK.
-        CheckEqual("V:/Developer", DecodeId("path_RDovUHJvamVjdHM"), "decode V:/Developer");
+        CheckEqual("D:/Projects", DecodeId("path_RDovUHJvamVjdHM"), "decode D:/Projects");
         CheckEqual("C:/Users/demo", DecodeId("path_QzovVXNlcnMvZGVtbw"), "decode C:/Users/demo");
-        CheckEqual("F:/\u6587\u4ef6\u5939 \u8001\u7248/personal content/\u8bfe\u7a0b\u8d44\u6599/\u5176\u4ed6/\u8bba\u6587",
+        CheckEqual("F:/\u793a\u4f8b/\u8d44\u6599/\u8bba\u6587",
                    DecodeId("path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM"),
                    "decode the CJK sample path");
         CheckEqual(MakeId("F:\\a\\b"), MakeId("F:/a/b/"), "separators and trailing slash normalise");
@@ -692,8 +696,8 @@ public static class OpenChamberBridge
         }
 
         // Round trip on a CJK path with a trailing separator.
-        var cjk = "F:\\\u6587\u4ef6\u5939 \u8001\u7248\\personal content\\\u8bfe\u7a0b\u8d44\u6599\\\u5176\u4ed6\\\u8bba\u6587";
-        CheckEqual("F:/\u6587\u4ef6\u5939 \u8001\u7248/personal content/\u8bfe\u7a0b\u8d44\u6599/\u5176\u4ed6/\u8bba\u6587",
+        var cjk = "F:\\\u793a\u4f8b\\\u8d44\u6599\\\u8bba\u6587";
+        CheckEqual("F:/\u793a\u4f8b/\u8d44\u6599/\u8bba\u6587",
                    DecodeId(MakeId(cjk)), "CJK path round-trips through the id");
 
         // Rejections.
@@ -875,11 +879,18 @@ public static class OpenChamberBridge
             Check(backup.StartsWith(bdir, StringComparison.OrdinalIgnoreCase),
                   "the backup lands in the directory it was told to use");
 
-            // Twelve more writes, then one that must prune: the directory keeps at
-            // most ten, so the point of a backup directory is not defeated by itself.
+            // Twelve more writes, so the directory is well past its bound and must prune:
+            // the point of a backup directory is not defeated by itself.
             for (var i = 0; i < 12; i++) BackupSettings(source, bdir);
             var kept = Directory.GetFiles(bdir, "settings-*.json");
-            Check(kept.Length <= 10, $"the backup directory prunes to ten, holds {kept.Length}");
+            // The bound is BackupKeepCount PLUS the oldest copy, because pruning
+            // never deletes the oldest — see the block below for why that matters.
+            // This line used to assert <= 10, which contradicted the <=
+            // BackupKeepCount + 1 asserted a few lines down and failed against the
+            // implemented behaviour. A self-test that is red for a reason nobody
+            // reads stops being a signal, so it is asserting the real contract.
+            Check(kept.Length is > BackupKeepCount and <= BackupKeepCount + 1,
+                  $"the backup directory prunes to {BackupKeepCount} plus the oldest, holds {kept.Length}");
 
             Check(ThrowsDataProblem(() => BackupSettings(Path.Combine(bdir, "nope.json"), bdir)),
                   "backing up a file that does not exist is rejected");

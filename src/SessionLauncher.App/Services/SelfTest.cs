@@ -59,16 +59,21 @@ namespace SessionLauncher.App.Services
 
         // ---- search engine --------------------------------------------------
 
+        // Synthetic corpus. The strings are invented, not copied from a real
+        // catalog, but they keep the properties the assertions below depend on:
+        // mixed CJK/ASCII in one document, CJK and ASCII tokens that appear in
+        // DIFFERENT documents, an empty title, a literal pipe, and an agent-only
+        // token. Changing them means re-reading the assertions that name them.
         private static List<SearchDoc> Corpus() =>
         [
-            new("ses_f0d42b1", "GNSS 设备 TEC 自检", "F:/proj/capstone", "build", 342),
+            new("ses_f0d42b1", "GNSS 设备 TEC 自检",              "F:/proj/综合实践",  "build", 342),
             new("ses_alpha",  "Fix the DNS resolver",             "F:/proj/net",      "build", 500),
             new("ses_beta",   "bandwidth tuning",                  "F:/proj/net",      "plan",  12),
             new("ses_gamma",  "修复错误",                          "F:/proj/sample",      "build", 8),
             new("ses_delta",  "恢复所有对话记录",                   "F:/proj/sample",      "build", 180),
             new("ses_eps",    "",                                  "F:/proj/empty",    "build", 0),
             new("ses_zeta",   "Pipe | handling in markdown",       "F:/proj/md",       "build", 44),
-            new("ses_eta",    "Docker Engine 镜像拉取超时",         "F:/proj/capstone",  "build", 158),
+            new("ses_eta",    "Docker Engine 镜像拉取超时",         "F:/proj/综合实践",  "build", 158),
             new("ses_theta",  "DNS",                              "F:/proj/net",      "build", 5),
             new("ses_iota",   "中文会话标题测试",                   "F:/proj/sample",      "build", 64),
             // Reachable only through the agent field, which isolates agent matching.
@@ -130,7 +135,7 @@ namespace SessionLauncher.App.Services
             // Mixed CJK + ASCII.
             Check(SessionSearch.Search(docs, "GNSS sample").Count == 0,
                   "tokens must match within one document (gnss + sample in different docs)");
-            Check(SessionSearch.Search(docs, "TEC capstone").Count >= 1, "mixed ASCII+CJK tokens both match");
+            Check(SessionSearch.Search(docs, "TEC 综合实践").Count >= 1, "mixed ASCII+CJK tokens both match");
 
             // Agent field participates: "reviewer" appears in no other field of that doc.
             var byAgent = SessionSearch.Search(docs, "reviewer");

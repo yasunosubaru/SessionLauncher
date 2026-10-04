@@ -53,17 +53,31 @@ namespace SessionLauncher.App.Services
         /// <summary>Absolute path this catalog was constructed with.</summary>
         public string MarkdownPath => _markdownPath;
 
-        /// <summary>Canonical catalog location, shared with the Node MCP server.</summary>
-        private const string CanonicalCatalogPath = @"<catalog dir>\TOP-LEVEL-SESSIONS.md";
+        /// <summary>Environment variable that overrides every candidate below.</summary>
+        /// <remarks>
+        /// This used to be a hardcoded absolute path on the machine the app was
+        /// written on. That is the wrong shape for a published tool: it leaks the
+        /// author's disk layout, and it silently fails for everyone else. The Node
+        /// writer (<c>lib/catalog.mjs</c>) has always honoured this variable, so
+        /// putting the reader on the same override also removes a real way for the
+        /// two halves to disagree about which file they are talking about.
+        /// </remarks>
+        public const string CatalogEnvVar = "SESSIONLAUNCHER_CATALOG";
 
         /// <summary>
         /// Candidate catalog locations, in priority order. The first that exists wins.
         /// </summary>
         /// <remarks>
-        /// The canonical path leads on purpose. The exe-local copy is only a portable
-        /// fallback: if the MCP writer targeted it while this reader preferred the
-        /// canonical file, the two would drift and report different session counts.
-        /// The Node server (<c>lib/catalog.mjs</c>) uses the same order.
+        /// Order matters more than it looks. This list MUST match
+        /// <c>lib/catalog.mjs</c> exactly, or the generator writes one file and the
+        /// GUI reads another.
+        /// <para>
+        /// The canonical per-user path leads the non-override entries on purpose. An
+        /// earlier arrangement put the exe-local copy ahead of it, which is a trap:
+        /// a stale <c>data\</c> beside the exe then outranks the live catalog and
+        /// silently reports an old session list. That is precisely the drift the
+        /// ordering exists to prevent, reached from the other direction.
+        /// </para>
         /// </remarks>
         public static IReadOnlyList<string> ProbeCandidatePaths(string exeDir)
         {
@@ -71,15 +85,20 @@ namespace SessionLauncher.App.Services
                 ? AppContext.BaseDirectory
                 : exeDir;
 
-            return new[]
-            {
-                CanonicalCatalogPath,
-                Path.Combine(root, "data", FileName),
-                Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "SessionLauncher", FileName),
-                @"<repo>\apps\SessionLauncher\data\" + FileName,
-            };
+            var candidates = new List<string>();
+
+            // An explicit override outranks everything: it is the user saying which
+            // file they mean.
+            var overridden = Environment.GetEnvironmentVariable(CatalogEnvVar);
+            if (!string.IsNullOrWhiteSpace(overridden))
+                candidates.Add(overridden);
+
+            candidates.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SessionLauncher", FileName));
+            candidates.Add(Path.Combine(root, "data", FileName));
+
+            return candidates;
         }
 
         /// <summary>

@@ -102,9 +102,9 @@ public sealed class LauncherService
     /// OpenChamber resolves that session's own project, switches to it, and its
     /// sidebar then shows the project's whole session set grouped beneath the project
     /// node — the project-then-sessions tree, which is what opening a set of
-    /// sessions means here. Verified on this machine: linking
-    /// <c>ses_4a1b2c3d4e5f6g7h8i9j0k1l</c> moved OpenChamber to the sample project
-    /// with its conversations listed under it.
+    /// sessions means here. Verified against a real install: linking one session
+    /// moved OpenChamber to that session's project with its conversations listed
+    /// under it.
     /// <para>
     /// <b>Nothing is written anywhere.</b> OpenChamber updates its own
     /// <c>activeProjectId</c> and <c>lastDirectory</c> in response to the navigation;

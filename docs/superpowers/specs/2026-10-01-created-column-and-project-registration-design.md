@@ -47,8 +47,8 @@ live `settings.json`:
   survives. `window-all-closed` (line 5269) quits on Windows, but hiding to tray means
   it never fires. So a full quit requires the tray menu's **Quit**, which shows a
   confirmation dialog.
-- On this machine `settings.json` already holds 4 registered projects: sample,
-  Developer, `C:\Users\demo`, capstone. Our own list has 40 projects.
+- On this machine `settings.json` already holds 4 registered projects: 示例项目,
+  Developer, `C:\Users\demo`, 综合实践. Our own list has 40 projects.
 
 **Consequence.** For a project OpenChamber already knows, one deep link is enough —
 OpenChamber switches `activeProjectId` by itself. For the other 36, the only ways to
@@ -205,7 +205,7 @@ minimised, closed or clicked; its four processes were only ever counted.
 | 4 | 项目 view columns | OpenChamber · 项目 · 会话 · **创建时间** · 最近使用 · 路径; **颜色 absent** |
 | 5 | Registration marks | **4 filled, 21 hollow** — matching the four projects in the live `settings.json` exactly |
 | 6 | Font scaling | at **160 %** (above the 140 % target): 82 complete timestamps, **0 truncated** |
-| 7 | Registered project → deep link | `activeProjectId` moved on its own from `path_QzovVXNlcnMvZGVtbw` to capstone's `path_RjovZXhhbXBsZS…`; top-level keys 58 → 58; projects 4 → 4; project set unchanged → **the launcher wrote nothing** |
+| 7 | Registered project → deep link | `activeProjectId` moved on its own from `path_QzovVXNlcnMvZGVtbw` to 综合实践's `path_RjovZXhhbXBsZS…`; top-level keys 58 → 58; projects 4 → 4; project set unchanged → **the launcher wrote nothing** |
 | 8 | Unregistered project, OpenChamber running | tray-Quit instruction shown; 取消等待 button revealed; `settings.json` **byte-identical** |
 | 9 | Cancel | 已取消等待。 ; `settings.json` still byte-identical; button hidden |
 | 10 | Timeout | message shown; `settings.json` still byte-identical; button hidden |

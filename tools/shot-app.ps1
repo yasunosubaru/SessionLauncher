@@ -34,8 +34,11 @@ public static class WinCapture {
 }
 '@
 
-$exe = '<repo>\apps\SessionLauncher\src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
-$out = "<repo>\apps\SessionLauncher\artifacts\$Label.png"
+# Derived from this script's own location, so a clone anywhere works. This used to
+# be an absolute path into one machine's checkout.
+$repoRoot = Split-Path $PSScriptRoot -Parent
+$exe = Join-Path $repoRoot 'src\SessionLauncher.App\bin\Release\net10.0-windows\SessionLauncher.exe'
+$out = Join-Path $repoRoot "artifacts\$Label.png"
 New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
 
 Get-Process SessionLauncher -ErrorAction SilentlyContinue |

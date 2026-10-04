@@ -25,10 +25,11 @@ OpenChamber or to the opencode CLI.
 
 ## The catalog
 
-Canonical location, shared by both halves:
+The catalog is one markdown table. Where it lives is **yours to choose** — set
+`SESSIONLAUNCHER_CATALOG` to its full path and both halves will use it:
 
-```
-<catalog dir>\TOP-LEVEL-SESSIONS.md
+```powershell
+$env:SESSIONLAUNCHER_CATALOG = 'D:\somewhere\TOP-LEVEL-SESSIONS.md'
 ```
 
 The table has eight columns:
@@ -51,14 +52,15 @@ with no rows, because `created` is the one column a header is allowed to be miss
 Fallback order (first hit wins), implemented identically in
 `SessionCatalog.ProbeCandidatePaths` and `lib/catalog.mjs`:
 
-1. `<catalog dir>\TOP-LEVEL-SESSIONS.md`  ← canonical
-2. `<exeDir>\data\TOP-LEVEL-SESSIONS.md`          ← portable copy, shipped next to the exe
-3. `%LOCALAPPDATA%\SessionLauncher\TOP-LEVEL-SESSIONS.md`
-4. `<repo>\apps\SessionLauncher\data\TOP-LEVEL-SESSIONS.md`
+1. `%SESSIONLAUNCHER_CATALOG%`                            ← your path, if you set it
+2. `%LOCALAPPDATA%\SessionLauncher\TOP-LEVEL-SESSIONS.md`  ← default
+3. `<exeDir>\data\TOP-LEVEL-SESSIONS.md`                   ← portable copy, next to the exe
+4. `<repoRoot>\data\TOP-LEVEL-SESSIONS.md`                 ← when running from a clone
 
-The canonical path leads deliberately. An earlier revision preferred the exe-local
-copy, so `refresh_catalog` wrote to one file while the GUI read another and the two
-silently drifted apart.
+The default leads deliberately. An earlier revision preferred the exe-local copy,
+so `refresh_catalog` wrote to one file while the GUI read another and the two
+silently drifted apart. Nothing here is hardcoded to one machine: the override
+first, then two paths derived from the environment.
 
 Regenerate from the database:
 
@@ -66,10 +68,14 @@ Regenerate from the database:
 node src\SessionLauncher.Mcp\refresh_catalog.mjs
 ```
 
-Reads `C:\Users\demo\.local\share\opencode\opencode.db` **read-only** via the
-built-in `node:sqlite`, selects `session_v2 WHERE parent_id IS NULL` (the ~228
-subagent child rows are excluded), and writes both the markdown table and a
-`sessions.json` sidecar.
+Reads `%USERPROFILE%\.local\share\opencode\opencode.db` **read-only** via the
+built-in `node:sqlite` (override with `SESSIONLAUNCHER_DB`), selects
+`session_v2 WHERE parent_id IS NULL` (subagent child rows are excluded), and writes
+both the markdown table and a `sessions.json` sidecar.
+
+**The generated catalog is not in this repository, on purpose.** It lists every
+real conversation on your disk — session ids, titles, directory paths — which is
+machine data, not source. Generate your own.
 
 ## The GUI
 
@@ -153,11 +159,11 @@ feature has made, so it is the only one that can undo all of them at once.
 OpenChamber gives every conversation its own working directory:
 
 ```
-C:\Users\demo\.config\openchamber\chats\2026-01-01\session-abc123-…
+%USERPROFILE%\.config\openchamber\chats\2026-01-01\session-…
 ```
 
 The catalog records that directory, so grouping on it produced 25 rows named
-`session-abc123-…`, each holding exactly one conversation, which buried the handful
+`session-…`, each holding exactly one conversation, which buried the handful
 of directories a person would actually call a project. `ProjectCatalog.ResolveProjectDirectory`
 collapses everything at or below `openchamber\chats` onto the directory above it, so
 those become one row, `OpenChamber 会话`, holding 37 conversations. The marker is
@@ -303,9 +309,7 @@ Two details that are easy to get wrong and are both covered by tests:
   Quality-first looks correct and is not: a word-prefix hit in the *directory*
   (600 × 6 = 3600) would beat a substring hit in the *title* (400 × 10 = 4000), so a
   session whose title literally contains the query ranked below one that only
-  matched on its folder name. Reproduced on the real catalog — searching `sample` put
-  the title matches `ses_4a1b2c3d` and `ses_9z8y7x6w` below sessions that do not
-  mention `sample` in the title at all. `SelfTest` pins this.
+  matched on its folder name. `SelfTest` pins this.
 - **`IsSubsequence` must confirm the needle is fully consumed.** The naive
   `!needle.MoveNext()` reading is right, but returning on the positive reading
   matches on the first character alone and makes the fuzzy tier swallow everything.
@@ -608,8 +612,8 @@ SessionLauncher/
   broken.** Selecting a project or session row and then pressing the action buttons is
   the primary flow, and it could not be confirmed end to end here. What is known:
   - `SelectionItemPattern.Select()` over UIA selects a row, the action buttons enable,
-    and the whole business path works — verified on sample: the status line read
-    `已在 OpenChamber 中打开 sample 的 11 条会话。`
+    and the whole business path works — verified against a real install: the status
+    line reported that the project's sessions had been opened in OpenChamber.
   - Real clicks (`mouse_event` and `SendInput`, at row text, row blank, and the
     checkbox cell) and keyboard `Down` all failed to select, in **both** views, while
     `Tab` traversal does reach the rows and reports them as focusable.

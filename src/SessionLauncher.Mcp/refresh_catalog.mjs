@@ -7,7 +7,7 @@
 //   node refresh_catalog.mjs
 //
 // Database (opened READ-ONLY):
-//   C:\Users\demo\.local\share\opencode\opencode.db
+//   %USERPROFILE%\.local\share\opencode\opencode.db
 //   Override with env SESSIONLAUNCHER_DB (useful for tests / portability).
 //
 // "Top-level conversation" means session_v2.parent_id IS NULL. The subagent
@@ -19,13 +19,21 @@
 //   sessions.json          [{id,title,directory,agent,created,updated,msgs}]
 
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 import { escapeCell, resolveCatalogWritePath } from './lib/catalog.mjs';
 
-const DEFAULT_DB_PATH = 'C:\\Users\\demo\\.local\\share\\opencode\\opencode.db';
+// Derived from the environment rather than spelled out as an absolute path.
+// This used to be the author's own %USERPROFILE% written out in full, which is
+// both a leak of their account name and a default that is wrong on every other
+// machine. homedir() resolves to the same place on Windows, and USERPROFILE is
+// honoured first so a caller that relocated their profile still works.
+const DEFAULT_DB_PATH = join(
+  process.env.USERPROFILE || homedir(),
+  '.local', 'share', 'opencode', 'opencode.db');
 
 const TABLE_HEADER =
   '| # | created | updated | msgs | agent | directory | title | session id |';

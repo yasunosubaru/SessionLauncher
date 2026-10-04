@@ -4,8 +4,9 @@
 // Run: node tools/test-catalog.mjs   (exit 0 = pass, non-zero = fail)
 //
 // WHY THE OUTPUT OVERRIDE MATTERS
-// resolveCatalogWritePath() returns <catalog dir>\ whenever that directory
-// exists, and it does on this machine. Calling generate() without an override
+// resolveCatalogWritePath() returns the live catalog path (%LOCALAPPDATA%
+// \SessionLauncher\TOP-LEVEL-SESSIONS.md) whenever that directory exists, and it
+// does on any normal Windows install. Calling generate() without an override
 // therefore rewrites the live catalog that the GUI and the MCP server both read.
 // The first suite below pins an environment override so every other assertion in
 // this file writes into a scratch directory instead.

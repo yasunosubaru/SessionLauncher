@@ -4,3 +4,6 @@ obj/
 *.user
 artifacts/
 .superpowers/
+
+# Generated catalog: machine data (session ids, titles, real paths). Never tracked.
+data/TOP-LEVEL-SESSIONS.md

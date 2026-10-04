@@ -12,6 +12,7 @@
 // Run: node server.mjs
 
 import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { loadCatalog } from './lib/catalog.mjs';
@@ -81,9 +82,18 @@ function openSession(args = {}) {
   }
 
   if (target === 'openchamber') {
+    // Per-user install location, derived rather than hardcoded. The previous
+    // literal was one account's %LOCALAPPDATA% spelled out in full, which pointed
+    // every other user at a path that does not exist on their machine.
     const exe =
       process.env.SESSIONLAUNCHER_OPENCHAMBER_EXE ||
-      'C:\\Users\\demo\\AppData\\Local\\Programs\\@openchamberelectron\\OpenChamber.exe';
+      (process.env.LOCALAPPDATA
+        ? join(process.env.LOCALAPPDATA, 'Programs', '@openchamberelectron', 'OpenChamber.exe')
+        : null);
+    if (!exe) {
+      throw new Error(
+        'Cannot locate OpenChamber.exe. Set SESSIONLAUNCHER_OPENCHAMBER_EXE to its full path.');
+    }
     spawnDetached(exe, [`openchamber://session/${sessionId}`], process.env, `OpenChamber (${exe})`);
     return `Launched OpenChamber for session ${sessionId}.`;
   }
