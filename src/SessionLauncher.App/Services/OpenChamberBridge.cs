@@ -21,7 +21,7 @@
 //     id = "path_" + base64url(pathWithForwardSlashes)
 //   path_RDovUHJvamVjdHM                 -> D:/Projects
 //   path_QzovVXNlcnMvZGVtbw              -> C:/Users/demo
-//   path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM -> F:/示例/资料/sample
+//   path_Rjov56S65L6LL-i1hOaWmS_orrrmloc -> F:/示例/资料/论文
 // So it is computed, not opaque: any path can be projected into the scheme. That
 // matters twice over — the launcher can synthesise an id for a directory OpenChamber
 // has never seen, and an id read back out of settings.json is a readable path
@@ -707,7 +707,7 @@ public static class OpenChamberBridge
                    "D:\\Projects projects to the expected id");
         CheckEqual("path_QzovVXNlcnMvZGVtbw", MakeId("C:\\Users\\demo"),
                    "C:\\Users\\demo projects to the expected id");
-        CheckEqual("path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM",
+        CheckEqual("path_Rjov56S65L6LL-i1hOaWmS_orrrmloc",
                    MakeId("F:\\\u793a\u4f8b\\\u8d44\u6599\\\u8bba\u6587"),
                    "the CJK sample path projects to the expected id");
 
@@ -715,7 +715,7 @@ public static class OpenChamberBridge
         CheckEqual("D:/Projects", DecodeId("path_RDovUHJvamVjdHM"), "decode D:/Projects");
         CheckEqual("C:/Users/demo", DecodeId("path_QzovVXNlcnMvZGVtbw"), "decode C:/Users/demo");
         CheckEqual("F:/\u793a\u4f8b/\u8d44\u6599/\u8bba\u6587",
-                   DecodeId("path_RjovZXhhbXBsZS9wZXJzb25hbCBjb250ZW50L2NvdXJzZS1ub3Rlcy90aGVzaXM"),
+                   DecodeId("path_Rjov56S65L6LL-i1hOaWmS_orrrmloc"),
                    "decode the CJK sample path");
         CheckEqual(MakeId("F:\\a\\b"), MakeId("F:/a/b/"), "separators and trailing slash normalise");
         CheckEqual(MakeId("F:\\a\\b"), MakeId("  F:\\a\\b  "), "surrounding whitespace is trimmed");
