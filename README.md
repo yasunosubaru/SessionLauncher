@@ -606,6 +606,10 @@ SessionLauncher/
     package.json, server.mjs, lib/catalog.mjs, refresh_catalog.mjs, README.md
 ```
 
+## License
+
+[MIT](LICENSE) © 2026 yasunosubaru.
+
 ## Known limits
 
 - **Row selection by synthetic mouse input is UNVERIFIED on this machine, and may be
