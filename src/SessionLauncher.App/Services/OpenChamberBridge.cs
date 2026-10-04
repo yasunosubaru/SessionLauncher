@@ -294,10 +294,23 @@ public static class OpenChamberBridge
         var root = backupRoot ?? DefaultBackupRoot;
         Directory.CreateDirectory(root);
 
+        // The name has to sort lexicographically BY TIME, because pruning below
+        // orders by name and must not depend on file timestamps or on the clock
+        // not having jumped. It also has to be UNIQUE: a millisecond stamp alone
+        // is not, and File.Copy(overwrite: true) then silently collapses two
+        // backups into one. Two writes inside the same millisecond lose the first
+        // copy, which is exactly the copy you would want if the second write went
+        // wrong. It does not bite in normal use — writes are seconds apart — but
+        // it made the self-test flaky: 13 rapid writes produced 8 files.
+        //
+        // A zero-padded sequence appended to every name keeps both properties.
+        // Within one millisecond the sequence orders the copies; across
+        // milliseconds the stamp dominates; and '-' (0x2D) sorts below every
+        // character the stamp itself can contain, so the ordering is total.
         var stamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture);
-        var target = Path.Combine(root, $"settings-{stamp}.json");
+        var target = NextFreeBackupPath(root, stamp);
 
-        File.Copy(settingsPath, target, overwrite: true);
+        File.Copy(settingsPath, target, overwrite: false);
 
         // Newest first, by name. The stamp format sorts lexicographically, so this
         // needs no file timestamps and cannot reorder on a clock change.
@@ -323,6 +336,26 @@ public static class OpenChamberBridge
         }
 
         return target;
+    }
+
+    /// <summary>
+    /// First unused backup name for this millisecond, as
+    /// <c>settings-&lt;stamp&gt;-&lt;seq&gt;.json</c> with a zero-padded sequence.
+    /// </summary>
+    /// <remarks>
+    /// Only the count of files sharing the stamp matters, and that is bounded by
+    /// <see cref="BackupKeepCount"/>, so the scan is trivially short.
+    /// </remarks>
+    private static string NextFreeBackupPath(string root, string stamp)
+    {
+        for (var seq = 0; ; seq++)
+        {
+            var candidate = Path.Combine(root, $"settings-{stamp}-{seq:D3}.json");
+            if (!File.Exists(candidate)) return candidate;
+            if (seq > BackupKeepCount + 2)
+                throw new IOException(
+                    $"Refusing to invent a backup name: {seq} files already share the stamp {stamp}.");
+        }
     }
 
     /// <summary>
@@ -881,16 +914,24 @@ public static class OpenChamberBridge
 
             // Twelve more writes, so the directory is well past its bound and must prune:
             // the point of a backup directory is not defeated by itself.
-            for (var i = 0; i < 12; i++) BackupSettings(source, bdir);
+            const int Writes = 12;
+            // Collect the RETURNED names rather than counting files in the directory.
+            // Pruning starts removing old copies as soon as the bound is passed, so
+            // the directory cannot show whether a write was lost — but the returned
+            // paths can. This assertion exists because it failed before: the name
+            // used to be a millisecond stamp alone, so rapid writes collided on it,
+            // overwrote each other, and a restore point silently disappeared.
+            var returned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            returned.Add(BackupSettings(source, bdir));
+            for (var i = 0; i < Writes; i++) returned.Add(BackupSettings(source, bdir));
+            CheckEqual(Writes + 1, returned.Count,
+                       "each write is given its own backup name, even within one millisecond");
+
             var kept = Directory.GetFiles(bdir, "settings-*.json");
             // The bound is BackupKeepCount PLUS the oldest copy, because pruning
             // never deletes the oldest — see the block below for why that matters.
-            // This line used to assert <= 10, which contradicted the <=
-            // BackupKeepCount + 1 asserted a few lines down and failed against the
-            // implemented behaviour. A self-test that is red for a reason nobody
-            // reads stops being a signal, so it is asserting the real contract.
-            Check(kept.Length is > BackupKeepCount and <= BackupKeepCount + 1,
-                  $"the backup directory prunes to {BackupKeepCount} plus the oldest, holds {kept.Length}");
+            CheckEqual(BackupKeepCount + 1, kept.Length,
+                       $"the backup directory prunes to {BackupKeepCount} plus the oldest");
 
             Check(ThrowsDataProblem(() => BackupSettings(Path.Combine(bdir, "nope.json"), bdir)),
                   "backing up a file that does not exist is rejected");

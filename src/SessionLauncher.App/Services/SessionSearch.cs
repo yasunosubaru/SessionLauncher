@@ -63,8 +63,9 @@ namespace SessionLauncher.App.Services
 
         /// <summary>
         /// Characters that end a word. Deliberately ASCII-only: CJK text is not
-        /// space-separated, so counting every ideograph as its own word would make
-        /// "示例评估" match sample and sample both as word-prefixes and blur the ranking.
+        /// space-separated, so counting every ideograph as its own word would make a
+        /// term occurring twice inside one CJK title register as two word-prefix hits,
+        /// and the ranking between that document and its neighbours would blur.
         /// </summary>
         private static readonly char[] WordSeparators = { ' ', '\t', '.', '/', '\\', '_', '-', ':', '|' };
 
